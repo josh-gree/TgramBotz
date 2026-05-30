@@ -157,6 +157,10 @@ SAMPLE_DIFF = """\
 """
 
 
+def diffshub_url(github_url: str) -> str:
+    return github_url.replace("https://github.com", "https://diffshub.com", 1)
+
+
 async def cmd_demo_telegraph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from tgrambotz.bot.telegraph import create_diff_page
 
@@ -182,6 +186,33 @@ async def cmd_demo_telegraph(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "Added token revocation."
         ),
         reply_markup=keyboard,
+    )
+
+
+async def cmd_demo_diffshub(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Demo using the actual TgramBotz PR #1
+    pr_url = "https://github.com/josh-gree/TgramBotz/pull/1"
+    commit_url = "https://github.com/josh-gree/TgramBotz/commit/7093fee"
+
+    await update.message.reply_text(
+        parse_mode=ParseMode.HTML,
+        text=(
+            "✏️ <code>auth.py</code>  <b>+42 -8</b>\n\n"
+            "Switched to async authentication with DB lookup.\n"
+            "Added token revocation."
+        ),
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔍 View Diff", url=diffshub_url(commit_url)),
+            InlineKeyboardButton("↩️ Revert", callback_data="revert:auth.py"),
+        ]]),
+    )
+    await asyncio.sleep(0.3)
+    await update.message.reply_text(
+        parse_mode=ParseMode.HTML,
+        text="Or view the full PR:",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("📋 PR #1 on DiffsHub", url=diffshub_url(pr_url)),
+        ]]),
     )
 
 
