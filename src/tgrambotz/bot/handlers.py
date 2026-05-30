@@ -10,6 +10,154 @@ from tgrambotz.db.database import async_session_factory
 from tgrambotz.db.models import ChatState, Event, Session
 
 
+async def cmd_demo_agent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Simulate a full agent turn: fix failing auth tests."""
+    chat_id = update.effective_chat.id
+    bot = context.bot
+    H = ParseMode.HTML
+
+    # ── User prompt ──────────────────────────────────────────────────────────
+    await bot.send_message(chat_id, parse_mode=H, text=(
+        "💬 <b>You</b>\n"
+        "Fix the failing auth tests"
+    ))
+    await asyncio.sleep(0.6)
+
+    # ── Status bar (will be edited in place throughout) ──────────────────────
+    status = await bot.send_message(chat_id, parse_mode=H, text=(
+        "┌ <b>Workspace:</b> backend\n"
+        "├ <b>Status:</b> Thinking…\n"
+        "└ <b>Tools:</b> 0"
+    ))
+    await asyncio.sleep(0.8)
+
+    # ── Thinking ─────────────────────────────────────────────────────────────
+    await bot.send_message(chat_id, parse_mode=H, text=(
+        "🧠 <i>Let me look at the failing tests and the auth module to understand what's broken.</i>"
+    ))
+    await asyncio.sleep(1.0)
+
+    # ── Read files ───────────────────────────────────────────────────────────
+    await status.edit_text(parse_mode=H, text=(
+        "┌ <b>Workspace:</b> backend\n"
+        "├ <b>Status:</b> Reading files…\n"
+        "└ <b>Tools:</b> 1"
+    ))
+    await bot.send_message(chat_id, parse_mode=H, text="📖 <code>auth.py</code>")
+    await asyncio.sleep(0.5)
+
+    await status.edit_text(parse_mode=H, text=(
+        "┌ <b>Workspace:</b> backend\n"
+        "├ <b>Status:</b> Reading files…\n"
+        "└ <b>Tools:</b> 2"
+    ))
+    await bot.send_message(chat_id, parse_mode=H, text="📖 <code>tests/test_auth.py</code>")
+    await asyncio.sleep(0.5)
+
+    await status.edit_text(parse_mode=H, text=(
+        "┌ <b>Workspace:</b> backend\n"
+        "├ <b>Status:</b> Reading files…\n"
+        "└ <b>Tools:</b> 3"
+    ))
+    await bot.send_message(chat_id, parse_mode=H, text="📖 <code>models/user.py</code>")
+    await asyncio.sleep(1.0)
+
+    # ── Thinking again ────────────────────────────────────────────────────────
+    await status.edit_text(parse_mode=H, text=(
+        "┌ <b>Workspace:</b> backend\n"
+        "├ <b>Status:</b> Thinking…\n"
+        "└ <b>Tools:</b> 3"
+    ))
+    await bot.send_message(chat_id, parse_mode=H, text=(
+        "🧠 <i>Found it. <code>authenticate()</code> is synchronous but the test is calling it with <code>await</code>. "
+        "Also the token comparison uses <code>==</code> directly instead of a constant-time compare. I'll fix both.</i>"
+    ))
+    await asyncio.sleep(1.2)
+
+    # ── Run failing tests first ───────────────────────────────────────────────
+    await status.edit_text(parse_mode=H, text=(
+        "┌ <b>Workspace:</b> backend\n"
+        "├ <b>Status:</b> Running tests…\n"
+        "└ <b>Tools:</b> 4"
+    ))
+    bash_msg = await bot.send_message(chat_id, parse_mode=H, text=(
+        "🧪 <code>pytest tests/test_auth.py -v</code>\n\n"
+        "<pre>collecting…</pre>"
+    ))
+    await asyncio.sleep(1.0)
+    await bash_msg.edit_text(parse_mode=H, text=(
+        "🧪 <code>pytest tests/test_auth.py -v</code>\n\n"
+        "<pre>"
+        "FAILED test_auth.py::test_valid_token\n"
+        "FAILED test_auth.py::test_expired_token\n"
+        "PASSED test_auth.py::test_missing_token\n"
+        "\n"
+        "2 failed, 1 passed in 0.41s"
+        "</pre>"
+    ))
+    await asyncio.sleep(1.0)
+
+    # ── Edit file ─────────────────────────────────────────────────────────────
+    await status.edit_text(parse_mode=H, text=(
+        "┌ <b>Workspace:</b> backend\n"
+        "├ <b>Status:</b> Editing auth.py…\n"
+        "└ <b>Tools:</b> 5"
+    ))
+
+    diff_url = "https://diffshub.com/josh-gree/TgramBotz/commit/57e2bbe"
+    await bot.send_message(chat_id, parse_mode=H,
+        text=(
+            "✏️ <code>auth.py</code>  <b>+12 -4</b>\n\n"
+            "<pre><code class=\"language-diff\">"
+            "-def authenticate(token: str) -> bool:\n"
+            "-    return token == SECRET\n"
+            "+async def authenticate(token: str) -> bool:\n"
+            "+    return hmac.compare_digest(token, SECRET)"
+            "</code></pre>"
+        ),
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔍 View Full Diff", url=diff_url),
+        ]]),
+    )
+    await asyncio.sleep(1.2)
+
+    # ── Run tests again ───────────────────────────────────────────────────────
+    await status.edit_text(parse_mode=H, text=(
+        "┌ <b>Workspace:</b> backend\n"
+        "├ <b>Status:</b> Running tests…\n"
+        "└ <b>Tools:</b> 6"
+    ))
+    bash_msg2 = await bot.send_message(chat_id, parse_mode=H, text=(
+        "🧪 <code>pytest tests/test_auth.py -v</code>\n\n"
+        "<pre>collecting…</pre>"
+    ))
+    await asyncio.sleep(1.2)
+    await bash_msg2.edit_text(parse_mode=H, text=(
+        "🧪 <code>pytest tests/test_auth.py -v</code>\n\n"
+        "<pre>"
+        "PASSED test_auth.py::test_valid_token\n"
+        "PASSED test_auth.py::test_expired_token\n"
+        "PASSED test_auth.py::test_missing_token\n"
+        "\n"
+        "3 passed in 0.38s ✓"
+        "</pre>"
+    ))
+    await asyncio.sleep(0.8)
+
+    # ── Done ──────────────────────────────────────────────────────────────────
+    await status.edit_text(parse_mode=H, text=(
+        "┌ <b>Workspace:</b> backend\n"
+        "├ <b>Status:</b> ✅ Complete\n"
+        "└ <b>Tools:</b> 6"
+    ))
+    await bot.send_message(chat_id, parse_mode=H, text=(
+        "✅ <b>Done</b>\n\n"
+        "Fixed <code>authenticate()</code> — was synchronous, tests expected async.\n"
+        "Also switched to <code>hmac.compare_digest</code> to prevent timing attacks.\n\n"
+        "Tests: <b>3 passed</b>   Files: <b>1 modified</b>"
+    ))
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "👋 Welcome to TgramBotz!\n\n"

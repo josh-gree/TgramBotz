@@ -19,31 +19,55 @@ async def _get_token() -> str:
     return _access_token
 
 
+def _node(tag: str, *children, attrs: dict | None = None) -> dict:
+    n = {"tag": tag, "children": list(children)}
+    if attrs:
+        n["attrs"] = attrs
+    return n
+
+
 def _diff_to_nodes(filename: str, additions: int, deletions: int, diff_text: str) -> list:
-    """Convert a unified diff into Telegraph Node objects."""
-    nodes = [
-        {"tag": "h3", "children": [filename]},
-        {"tag": "p", "children": [f"+{additions} additions  -{deletions} deletions"]},
-        {"tag": "hr"},
-    ]
+    nodes: list = []
 
-    # Split diff into labelled line groups for readability
+    # Header
+    nodes.append(_node("h3", filename))
+    nodes.append(_node("p",
+        _node("b", f"+{additions}"),
+        f" additions   ",
+        _node("s", f"-{deletions}"),
+        " deletions",
+    ))
+    nodes.append(_node("hr"))
+
     lines = diff_text.splitlines()
-    added, removed, context = [], [], []
+    current_hunk: list = []
 
-    def flush(buf: list, prefix: str) -> None:
-        if buf:
-            nodes.append({"tag": "pre", "children": ["\n".join(buf)]})
-            buf.clear()
+    def flush_hunk() -> None:
+        if current_hunk:
+            nodes.append(_node("pre", *current_hunk))
+            current_hunk.clear()
 
-    block: list[str] = []
     for line in lines:
-        block.append(line)
+        if line.startswith("@@"):
+            # Hunk header — emit previous block, start a new section
+            flush_hunk()
+            nodes.append(_node("h4", line))
+        elif line.startswith("---") or line.startswith("+++"):
+            # File header lines — skip (already in page title)
+            continue
+        elif line.startswith("+"):
+            # Addition — bold
+            flush_hunk()
+            nodes.append(_node("p", _node("b", line)))
+        elif line.startswith("-"):
+            # Deletion — strikethrough
+            flush_hunk()
+            nodes.append(_node("p", _node("s", line)))
+        else:
+            # Context line — plain, group into pre blocks
+            current_hunk.append(line)
 
-    # Emit as one pre block — Telegraph monospace renders + / - clearly
-    if block:
-        nodes.append({"tag": "pre", "children": ["\n".join(block)]})
-
+    flush_hunk()
     return nodes
 
 
@@ -61,7 +85,7 @@ async def create_diff_page(
     async with httpx.AsyncClient() as client:
         r = await client.post(f"{_BASE}/createPage", data={
             "access_token": token,
-            "title": f"Diff — {filename}",
+            "title": f"{filename}  +{additions} -{deletions}",
             "author_name": "TgramBotz",
             "content": json.dumps(nodes),
             "return_content": "false",
