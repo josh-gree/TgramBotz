@@ -118,6 +118,73 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(f"Echo: {text}")
 
 
+SAMPLE_DIFF = """\
+--- a/auth.py
++++ b/auth.py
+@@ -1,18 +1,32 @@
+-def authenticate(token: str) -> bool:
+-    return token == SECRET
++async def authenticate(
++    token: str,
++    db: AsyncSession,
++) -> User | None:
++    result = await db.execute(
++        select(User).where(User.token == token)
++    )
++    return result.scalar_one_or_none()
+
+-def require_auth(f):
+-    def wrapper(*args, **kwargs):
+-        if not authenticate(args[0]):
+-            raise PermissionError
+-        return f(*args, **kwargs)
+-    return wrapper
++def require_auth(f):
++    async def wrapper(*args, **kwargs):
++        user = await authenticate(args[0], args[1])
++        if user is None:
++            raise HTTPException(status_code=401)
++        return await f(*args, user=user, **kwargs)
++    return wrapper
++
++async def revoke_token(token: str, db: AsyncSession) -> None:
++    await db.execute(
++        update(User)
++        .where(User.token == token)
++        .values(token=None, revoked_at=datetime.utcnow())
++    )
++    await db.commit()
+"""
+
+
+async def cmd_demo_telegraph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from tgrambotz.bot.telegraph import create_diff_page
+
+    msg = await update.message.reply_text("📡 Publishing diff to Telegraph…")
+
+    url = await create_diff_page(
+        filename="auth.py",
+        additions=42,
+        deletions=8,
+        diff_text=SAMPLE_DIFF,
+    )
+
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("📋 View Diff", url=url),
+        InlineKeyboardButton("↩️ Revert", callback_data="revert:auth.py"),
+    ]])
+
+    await msg.edit_text(
+        parse_mode=ParseMode.HTML,
+        text=(
+            "✏️ <code>auth.py</code>  <b>+42 -8</b>\n\n"
+            "Switched to async authentication with DB lookup.\n"
+            "Added token revocation."
+        ),
+        reply_markup=keyboard,
+    )
+
+
 async def cmd_demo_diff(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     bot = context.bot

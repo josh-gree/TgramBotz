@@ -13,6 +13,7 @@ from telegram.ext import (
 from tgrambotz.bot.handlers import (
     cmd_demo,
     cmd_demo_diff,
+    cmd_demo_telegraph,
     cmd_new,
     cmd_start,
     cmd_switch,
@@ -43,6 +44,7 @@ def _build_app() -> Application:
     app.add_handler(CommandHandler("switch", cmd_switch))
     app.add_handler(CommandHandler("demo", cmd_demo))
     app.add_handler(CommandHandler("demo_diff", cmd_demo_diff))
+    app.add_handler(CommandHandler("demo_telegraph", cmd_demo_telegraph))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     return app
 
