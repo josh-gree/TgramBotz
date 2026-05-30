@@ -76,16 +76,94 @@ async def cmd_demo_grammar(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await asyncio.sleep(GAP)
 
     # ═══════════════════════════════════════════════════════════════════
-    # 3. READ — one line per file
+    # 3. READ — one line per file, View button opens Telegraph Instant View
     # ═══════════════════════════════════════════════════════════════════
-    await section("3 · Read")
+    await section("3 · Read  (tap View to see content)")
 
-    await bot.send_message(chat_id, parse_mode=H, text="📖 <code>auth.py</code>")
-    await asyncio.sleep(0.3)
-    await bot.send_message(chat_id, parse_mode=H, text="📖 <code>tests/test_auth.py</code>")
-    await asyncio.sleep(0.3)
-    # Read with line range
-    await bot.send_message(chat_id, parse_mode=H, text="📖 <code>auth.py</code>  <i>lines 42–78</i>")
+    from tgrambotz.bot.telegraph import create_file_page
+
+    auth_content = '''\
+import hmac
+from sqlalchemy import select
+from sqlmodel.ext.asyncio.session import AsyncSession
+from fastapi import HTTPException
+from .models import User
+
+SECRET = "super-secret-key"
+
+async def authenticate(token: str, db: AsyncSession) -> User | None:
+    result = await db.execute(
+        select(User).where(User.token == token)
+    )
+    return result.scalar_one_or_none()
+
+def require_auth(f):
+    async def wrapper(*args, **kwargs):
+        user = await authenticate(args[0], args[1])
+        if user is None:
+            raise HTTPException(status_code=401)
+        return await f(*args, user=user, **kwargs)
+    return wrapper
+
+async def revoke_token(token: str, db: AsyncSession) -> None:
+    await db.execute(
+        update(User)
+        .where(User.token == token)
+        .values(token=None)
+    )
+    await db.commit()
+'''
+
+    test_content = '''\
+import pytest
+from httpx import AsyncClient
+from app.main import app
+
+@pytest.mark.asyncio
+async def test_valid_token():
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        r = await client.get("/me", headers={"Authorization": "Bearer valid"})
+    assert r.status_code == 200
+
+@pytest.mark.asyncio
+async def test_expired_token():
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        r = await client.get("/me", headers={"Authorization": "Bearer expired"})
+    assert r.status_code == 401
+
+@pytest.mark.asyncio
+async def test_missing_token():
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        r = await client.get("/me")
+    assert r.status_code == 401
+'''
+
+    url_auth = await create_file_page("auth.py", auth_content)
+    url_test = await create_file_page("tests/test_auth.py", test_content)
+
+    await bot.send_message(chat_id, parse_mode=H,
+        text="📖 <code>auth.py</code>  <i>28 lines</i>",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("👁 View", url=url_auth),
+        ]]),
+    )
+    await asyncio.sleep(0.5)
+
+    await bot.send_message(chat_id, parse_mode=H,
+        text="📖 <code>tests/test_auth.py</code>  <i>31 lines</i>",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("👁 View", url=url_test),
+        ]]),
+    )
+    await asyncio.sleep(0.5)
+
+    # Read with line range — smaller View scope
+    await bot.send_message(chat_id, parse_mode=H,
+        text="📖 <code>auth.py</code>  <i>lines 9–22</i>",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("👁 View", url=url_auth),
+        ]]),
+    )
     await asyncio.sleep(GAP)
 
     # ═══════════════════════════════════════════════════════════════════
@@ -280,7 +358,7 @@ async def cmd_demo_grammar(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         "<b>Grammar summary</b>\n\n"
         "  Status bar  — edited in place, always visible\n"
         "  🧠 Think     — italic, brief or explanatory\n"
-        "  📖 Read      — one line, optional range\n"
+        "  📖 Read      — one line + View button → Telegraph Instant View\n"
         "  🔍 Search    — query + match count\n"
         "  🧪 Bash      — streams in place, truncates long output\n"
         "  ✏️ Patch     — inline for small, button for large\n"

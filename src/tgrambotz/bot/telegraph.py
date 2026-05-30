@@ -71,6 +71,45 @@ def _diff_to_nodes(filename: str, additions: int, deletions: int, diff_text: str
     return nodes
 
 
+async def create_file_page(filename: str, content: str) -> str:
+    """Post a file's content to Telegraph and return the public URL."""
+    import json
+    token = await _get_token()
+
+    # Guess language from extension for the code block
+    ext = filename.rsplit(".", 1)[-1] if "." in filename else ""
+    lang_map = {
+        "py": "python", "js": "javascript", "ts": "typescript",
+        "jsx": "javascript", "tsx": "typescript", "go": "go",
+        "rs": "rust", "rb": "ruby", "sh": "bash", "yml": "yaml",
+        "yaml": "yaml", "json": "json", "md": "markdown",
+        "toml": "toml", "sql": "sql", "html": "html", "css": "css",
+    }
+    lang = lang_map.get(ext, "")
+    lines = content.count("\n") + 1
+
+    nodes = [
+        _node("h3", filename),
+        _node("p", f"{lines} lines"),
+        _node("hr"),
+        _node("pre", _node("code", content, attrs={"class": f"language-{lang}"}) if lang else content),
+    ]
+
+    async with httpx.AsyncClient() as client:
+        r = await client.post(f"{_BASE}/createPage", data={
+            "access_token": token,
+            "title": filename,
+            "author_name": "TgramBotz",
+            "content": json.dumps(nodes),
+            "return_content": "false",
+        })
+        r.raise_for_status()
+        result = r.json()
+        if not result.get("ok"):
+            raise RuntimeError(f"Telegraph error: {result}")
+        return result["result"]["url"]
+
+
 async def create_diff_page(
     filename: str,
     additions: int,
