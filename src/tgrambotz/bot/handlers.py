@@ -101,18 +101,15 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     chat_id = update.effective_chat.id
     text = update.message.text
 
-    async with async_session_factory() as db:
-        state = await db.get(ChatState, chat_id)
-        session_id = state.active_session_id if state else None
+    # Persist — don't let a DB failure block the reply
+    try:
+        async with async_session_factory() as db:
+            state = await db.get(ChatState, chat_id)
+            session_id = state.active_session_id if state else None
+            db.add(Event(session_id=session_id, chat_id=chat_id, type="USER_MESSAGE", payload=text))
+            await db.commit()
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("Failed to persist message")
 
-        event = Event(
-            session_id=session_id,
-            chat_id=chat_id,
-            type="USER_MESSAGE",
-            payload=text,
-        )
-        db.add(event)
-        await db.commit()
-
-    # Echo back — will be replaced by agent invocation in Ticket 8
     await update.message.reply_text(f"Echo: {text}")
