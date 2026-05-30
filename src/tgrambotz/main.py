@@ -15,6 +15,7 @@ from tgrambotz.bot.handlers import (
     cmd_demo_agent,
     cmd_demo_diff,
     cmd_demo_diffshub,
+    cmd_demo_grammar,
     cmd_demo_telegraph,
     cmd_new,
     cmd_start,
@@ -46,6 +47,7 @@ def _build_app() -> Application:
     app.add_handler(CommandHandler("switch", cmd_switch))
     app.add_handler(CommandHandler("demo", cmd_demo))
     app.add_handler(CommandHandler("demo_agent", cmd_demo_agent))
+    app.add_handler(CommandHandler("demo_grammar", cmd_demo_grammar))
     app.add_handler(CommandHandler("demo_diff", cmd_demo_diff))
     app.add_handler(CommandHandler("demo_telegraph", cmd_demo_telegraph))
     app.add_handler(CommandHandler("demo_diffshub", cmd_demo_diffshub))

@@ -10,6 +10,286 @@ from tgrambotz.db.database import async_session_factory
 from tgrambotz.db.models import ChatState, Event, Session
 
 
+async def cmd_demo_grammar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Walk through the full design grammar — every event type and composition pattern."""
+    chat_id = update.effective_chat.id
+    bot = context.bot
+    H = ParseMode.HTML
+    GAP = 0.6
+
+    async def section(title: str) -> None:
+        await bot.send_message(chat_id, parse_mode=H,
+            text=f"─────────────────────\n<b>{title}</b>")
+        await asyncio.sleep(GAP)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 1. STATUS BAR — lives at the top, edited in place, never re-sent
+    # ═══════════════════════════════════════════════════════════════════
+    await section("1 · Status Bar  (edited in place)")
+
+    s = await bot.send_message(chat_id, parse_mode=H, text=(
+        "┌ <b>Workspace:</b> backend\n"
+        "├ <b>Status:</b> Idle\n"
+        "└ <b>Tools:</b> 0"
+    ))
+    await asyncio.sleep(1.0)
+    await s.edit_text(parse_mode=H, text=(
+        "┌ <b>Workspace:</b> backend\n"
+        "├ <b>Status:</b> 🧠 Thinking…\n"
+        "└ <b>Tools:</b> 0"
+    ))
+    await asyncio.sleep(1.0)
+    await s.edit_text(parse_mode=H, text=(
+        "┌ <b>Workspace:</b> backend\n"
+        "├ <b>Status:</b> 📖 Reading files…\n"
+        "└ <b>Tools:</b> 3"
+    ))
+    await asyncio.sleep(1.0)
+    await s.edit_text(parse_mode=H, text=(
+        "┌ <b>Workspace:</b> backend\n"
+        "├ <b>Status:</b> 🧪 Running tests…\n"
+        "└ <b>Tools:</b> 7"
+    ))
+    await asyncio.sleep(1.0)
+    await s.edit_text(parse_mode=H, text=(
+        "┌ <b>Workspace:</b> backend\n"
+        "├ <b>Status:</b> ✅ Complete\n"
+        "└ <b>Tools:</b> 9"
+    ))
+    await asyncio.sleep(GAP)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 2. THINK — brief inline reasoning, italic
+    # ═══════════════════════════════════════════════════════════════════
+    await section("2 · Think")
+
+    await bot.send_message(chat_id, parse_mode=H, text=(
+        "🧠 <i>Investigating the auth flow…</i>"
+    ))
+    await asyncio.sleep(GAP)
+    # Longer thought
+    await bot.send_message(chat_id, parse_mode=H, text=(
+        "🧠 <i>The test is calling <code>authenticate()</code> with <code>await</code> "
+        "but the function is synchronous. I need to make it async and fix the token "
+        "comparison to use constant-time compare.</i>"
+    ))
+    await asyncio.sleep(GAP)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 3. READ — one line per file
+    # ═══════════════════════════════════════════════════════════════════
+    await section("3 · Read")
+
+    await bot.send_message(chat_id, parse_mode=H, text="📖 <code>auth.py</code>")
+    await asyncio.sleep(0.3)
+    await bot.send_message(chat_id, parse_mode=H, text="📖 <code>tests/test_auth.py</code>")
+    await asyncio.sleep(0.3)
+    # Read with line range
+    await bot.send_message(chat_id, parse_mode=H, text="📖 <code>auth.py</code>  <i>lines 42–78</i>")
+    await asyncio.sleep(GAP)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 4. SEARCH
+    # ═══════════════════════════════════════════════════════════════════
+    await section("4 · Search")
+
+    await bot.send_message(chat_id, parse_mode=H, text=(
+        "🔍 <code>authenticate</code>\n"
+        "<i>6 matches across 3 files</i>"
+    ))
+    await asyncio.sleep(GAP)
+    await bot.send_message(chat_id, parse_mode=H, text=(
+        "🔍 <code>TODO|FIXME|HACK</code>\n"
+        "<i>14 matches</i>"
+    ))
+    await asyncio.sleep(GAP)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 5. BASH — streams in place: pending → live output → done
+    # ═══════════════════════════════════════════════════════════════════
+    await section("5 · Bash  (streams in place)")
+
+    # 5a. Short command
+    b1 = await bot.send_message(chat_id, parse_mode=H, text=(
+        "🧪 <code>pytest tests/ -v</code>\n<pre>running…</pre>"
+    ))
+    await asyncio.sleep(1.0)
+    await b1.edit_text(parse_mode=H, text=(
+        "🧪 <code>pytest tests/ -v</code>\n"
+        "<pre>3 passed in 0.41s ✓</pre>"
+    ))
+    await asyncio.sleep(GAP)
+
+    # 5b. Failing output
+    b2 = await bot.send_message(chat_id, parse_mode=H, text=(
+        "🧪 <code>pytest tests/ -v</code>\n<pre>running…</pre>"
+    ))
+    await asyncio.sleep(1.0)
+    await b2.edit_text(parse_mode=H, text=(
+        "🧪 <code>pytest tests/ -v</code>\n"
+        "<pre>"
+        "FAILED test_auth.py::test_valid_token\n"
+        "FAILED test_auth.py::test_expired_token\n"
+        "PASSED test_auth.py::test_missing_token\n"
+        "\n"
+        "2 failed, 1 passed in 0.41s ✗"
+        "</pre>"
+    ))
+    await asyncio.sleep(GAP)
+
+    # 5c. Long output — truncated with line count
+    await bot.send_message(chat_id, parse_mode=H, text=(
+        "🧪 <code>npm run build</code>\n"
+        "<pre>"
+        "… 847 lines\n"
+        "webpack 5.91 compiled successfully\n"
+        "Build time: 12.4s"
+        "</pre>"
+    ))
+    await asyncio.sleep(GAP)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 6. PATCH — small diffs inline, large diffs → button
+    # ═══════════════════════════════════════════════════════════════════
+    await section("6 · Patch")
+
+    diff_url = "https://diffshub.com/josh-gree/TgramBotz/commit/87c31a5"
+
+    # 6a. Tiny change — show inline
+    await bot.send_message(chat_id, parse_mode=H, text=(
+        "✏️ <code>config.py</code>  <b>+1 -1</b>\n\n"
+        "<pre><code class=\"language-diff\">"
+        "-    api_key: str = \"\"\n"
+        "+    e2b_api_key: str = \"\""
+        "</code></pre>"
+    ))
+    await asyncio.sleep(GAP)
+
+    # 6b. Medium change — summary + button
+    await bot.send_message(chat_id, parse_mode=H,
+        text=(
+            "✏️ <code>auth.py</code>  <b>+12 -4</b>\n\n"
+            "<pre><code class=\"language-diff\">"
+            "-def authenticate(token: str) -> bool:\n"
+            "-    return token == SECRET\n"
+            "+async def authenticate(token: str) -> bool:\n"
+            "+    return hmac.compare_digest(token, SECRET)"
+            "</code></pre>"
+        ),
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔍 Full Diff", url=diff_url),
+            InlineKeyboardButton("↩️ Revert", callback_data="revert:auth.py"),
+        ]]),
+    )
+    await asyncio.sleep(GAP)
+
+    # 6c. Multi-file summary card
+    await bot.send_message(chat_id, parse_mode=H,
+        text=(
+            "✏️ <b>4 files changed</b>\n\n"
+            "  <code>auth.py</code>              <b>+42</b> <s>-8</s>\n"
+            "  <code>tests/test_auth.py</code>    <b>+91</b> <s>-12</s>\n"
+            "  <code>models/user.py</code>        <b>+18</b> <s>-3</s>\n"
+            "  <code>config.py</code>             <b>+1</b> <s>-1</s>"
+        ),
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔍 View All Changes", url=diff_url),
+        ]]),
+    )
+    await asyncio.sleep(GAP)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 7. RESULT
+    # ═══════════════════════════════════════════════════════════════════
+    await section("7 · Result")
+
+    # 7a. Simple
+    await bot.send_message(chat_id, parse_mode=H, text="✅ Done")
+    await asyncio.sleep(GAP)
+
+    # 7b. With stats
+    await bot.send_message(chat_id, parse_mode=H, text=(
+        "✅ <b>Done</b>\n\n"
+        "Fixed <code>authenticate()</code> — now async with constant-time compare.\n\n"
+        "Tests: <b>124 passed</b>   Files: <b>3 modified</b>"
+    ))
+    await asyncio.sleep(GAP)
+
+    # 7c. Error
+    await bot.send_message(chat_id, parse_mode=H, text=(
+        "❌ <b>Failed</b>\n\n"
+        "<code>ImportError: cannot import name 'compare_digest' from 'hmac'</code>\n\n"
+        "<i>Python version in sandbox is 3.8 — upgrading and retrying.</i>"
+    ))
+    await asyncio.sleep(GAP)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 8. APPROVAL — agent pauses, waits for user
+    # ═══════════════════════════════════════════════════════════════════
+    await section("8 · Approval  (agent pauses)")
+
+    # 8a. Simple confirm
+    await bot.send_message(chat_id, parse_mode=H,
+        text=(
+            "⚠️ <b>Approval Required</b>\n\n"
+            "Delete 15 generated files from <code>dist/</code>"
+        ),
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Approve", callback_data="approve"),
+            InlineKeyboardButton("❌ Reject", callback_data="reject"),
+        ]]),
+    )
+    await asyncio.sleep(GAP)
+
+    # 8b. Destructive command
+    await bot.send_message(chat_id, parse_mode=H,
+        text=(
+            "⚠️ <b>Approval Required</b>\n\n"
+            "Run:\n"
+            "<pre>docker compose down --volumes</pre>\n"
+            "<i>This will delete all local database data.</i>"
+        ),
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Approve", callback_data="approve"),
+            InlineKeyboardButton("❌ Reject", callback_data="reject"),
+        ]]),
+    )
+    await asyncio.sleep(GAP)
+
+    # 8c. Push to remote
+    await bot.send_message(chat_id, parse_mode=H,
+        text=(
+            "⚠️ <b>Approval Required</b>\n\n"
+            "Push <b>3 commits</b> to <code>main</code>\n\n"
+            "<code>fix: async authenticate\n"
+            "fix: constant-time token compare\n"
+            "test: add revocation tests</code>"
+        ),
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Push", callback_data="approve"),
+            InlineKeyboardButton("❌ Cancel", callback_data="reject"),
+        ]]),
+    )
+    await asyncio.sleep(GAP)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # DONE
+    # ═══════════════════════════════════════════════════════════════════
+    await bot.send_message(chat_id, parse_mode=H, text=(
+        "─────────────────────\n"
+        "<b>Grammar summary</b>\n\n"
+        "  Status bar  — edited in place, always visible\n"
+        "  🧠 Think     — italic, brief or explanatory\n"
+        "  📖 Read      — one line, optional range\n"
+        "  🔍 Search    — query + match count\n"
+        "  🧪 Bash      — streams in place, truncates long output\n"
+        "  ✏️ Patch     — inline for small, button for large\n"
+        "  ✅ Result    — plain or with stats\n"
+        "  ❌ Error     — with error text + next action\n"
+        "  ⚠️ Approval  — inline buttons, agent paused"
+    ))
+
+
 async def cmd_demo_agent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Simulate a full agent turn: fix failing auth tests."""
     chat_id = update.effective_chat.id
