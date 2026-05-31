@@ -32,7 +32,7 @@ async def main() -> None:
     logger.info("Starting bot in polling mode…")
     async with ptb_app:
         await ptb_app.start()
-        await ptb_app.updater.start_polling(drop_pending_updates=True)
+        await ptb_app.updater.start_polling(drop_pending_updates=False)
         logger.info("Bot is running. Press Ctrl+C to stop.")
         await asyncio.Event().wait()
         await ptb_app.updater.stop()
