@@ -30,8 +30,10 @@ async def main() -> None:
         async def on_tool(msg: str) -> None:
             await context.bot.send_message(chat_id, msg, parse_mode="Markdown")
 
-        reply = await agent.chat(text, on_tool=on_tool)
-        await update.message.reply_text(reply)
+        async def on_text(text: str) -> None:
+            await update.message.reply_text(text)
+
+        await agent.chat(text, on_tool=on_tool, on_text=on_text)
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
 

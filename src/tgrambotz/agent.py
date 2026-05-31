@@ -11,6 +11,7 @@ from tgrambotz.config import settings
 log = logging.getLogger(__name__)
 
 E2B_TEMPLATE = "owngk1zv1374s7wd8y6f"
+SANDBOX_TIMEOUT = 3600   # 1 hour idle timeout
 RESPONSE_TIMEOUT = 120
 
 _TOOL_ICONS = {
@@ -56,6 +57,7 @@ class OpenCodeAgent:
         self._sandbox = await AsyncSandbox.create(
             template=E2B_TEMPLATE,
             api_key=settings.e2b_api_key,
+            timeout=SANDBOX_TIMEOUT,
         )
         log.info("Sandbox ready: %s", self._sandbox.sandbox_id)
         await self._exec("opencode --version 2>&1", timeout=30)
@@ -80,7 +82,8 @@ class OpenCodeAgent:
         self,
         message: str,
         on_tool: Callable[[str], Awaitable[None]] | None = None,
-    ) -> str:
+        on_text: Callable[[str], Awaitable[None]] | None = None,
+    ) -> None:
         async with self._lock:
             quoted = shlex.quote(message)
             cmd = (
@@ -113,8 +116,6 @@ class OpenCodeAgent:
 
             asyncio.create_task(_wait_done())
 
-            final_text: list[str] = []
-
             while True:
                 line = await queue.get()
                 if line is None:
@@ -134,12 +135,13 @@ class OpenCodeAgent:
                         except Exception as e:
                             log.warning("on_tool error: %s", e)
 
-                elif etype == "text":
+                elif etype == "text" and on_text:
                     text = event.get("part", {}).get("text", "")
                     if text:
-                        final_text.append(text)
-
-            return "\n".join(final_text).strip() or "(no response)"
+                        try:
+                            await on_text(text)
+                        except Exception as e:
+                            log.warning("on_text error: %s", e)
 
     async def stop(self) -> None:
         if self._sandbox:
