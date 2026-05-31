@@ -58,6 +58,7 @@ class OpenCodeAgent:
             template=E2B_TEMPLATE,
             api_key=settings.e2b_api_key,
             timeout=SANDBOX_TIMEOUT,
+            envs={"DOPPLER_TOKEN": settings.doppler_token} if settings.doppler_token else {},
         )
         log.info("Sandbox ready: %s", self._sandbox.sandbox_id)
         await self._exec("opencode --version 2>&1", timeout=30)
