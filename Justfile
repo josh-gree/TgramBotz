@@ -9,9 +9,15 @@ default:
 
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
 
-# Install system dependencies (Doppler CLI)
+# Install all project dependencies: Doppler CLI, uv, Python packages
 init:
+    @echo "→ Installing Doppler CLI..."
     curl -Ls --tlsv1.2 --proto "=https" https://cli.doppler.com/install.sh | sudo sh
+    @echo "→ Installing uv..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    @echo "→ Syncing Python dependencies..."
+    uv sync
+    @echo "✓ Done — run 'doppler login' if not already authenticated, then 'just auth'"
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
 
