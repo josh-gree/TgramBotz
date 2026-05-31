@@ -61,6 +61,14 @@ class OpenCodeAgent:
             envs={"DOPPLER_TOKEN": settings.doppler_token} if settings.doppler_token else {},
         )
         log.info("Sandbox ready: %s", self._sandbox.sandbox_id)
+        if settings.doppler_token:
+            await self._exec(
+                f"doppler configure set token {settings.doppler_token} "
+                f"&& doppler configure set project claude-mobilr "
+                f"&& doppler configure set config dev",
+                timeout=15,
+            )
+            log.info("Doppler configured in sandbox")
         await self._exec("opencode --version 2>&1", timeout=30)
 
     async def _exec(self, cmd: str, timeout: float = RESPONSE_TIMEOUT) -> str:
