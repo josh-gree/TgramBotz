@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 from sqlalchemy import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -610,6 +611,11 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     chat_id = update.effective_chat.id
     text = update.message.text
 
+    # Shell passthrough — messages starting with $
+    if text.startswith("$"):
+        await on_shell(update, context, text[1:].strip())
+        return
+
     # Persist — don't let a DB failure block the reply
     try:
         async with async_session_factory() as db:
@@ -622,6 +628,49 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         logging.getLogger(__name__).exception("Failed to persist message")
 
     await update.message.reply_text(f"Echo: {text}")
+
+
+async def on_shell(update: Update, context: ContextTypes.DEFAULT_TYPE, cmd: str) -> None:
+    from tgrambotz.bot.shell import get_session
+
+    if not cmd:
+        await update.message.reply_text("Usage: <code>$ &lt;command&gt;</code>", parse_mode=ParseMode.HTML)
+        return
+
+    chat_id = update.effective_chat.id
+    session = get_session(chat_id)
+
+    # Send initial message then stream output into it
+    msg = await update.message.reply_text(
+        parse_mode=ParseMode.HTML,
+        text=f"<code>$ {cmd}</code>\n<pre>…</pre>",
+    )
+
+    lines: list[str] = []
+    last_edit = 0.0
+
+    async def render() -> str:
+        body = "\n".join(lines) if lines else "…"
+        # Telegram message limit is 4096 chars — keep last portion if needed
+        if len(body) > 3800:
+            body = "…\n" + body[-3700:]
+        return f"<code>$ {cmd}</code>\n<pre>{body}</pre>"
+
+    async for line in session.run(cmd):
+        lines.append(line)
+        now = time.monotonic()
+        if now - last_edit >= 1.0:
+            try:
+                await msg.edit_text(parse_mode=ParseMode.HTML, text=await render())
+                last_edit = now
+            except Exception:
+                pass
+
+    # Final edit with complete output
+    try:
+        await msg.edit_text(parse_mode=ParseMode.HTML, text=await render())
+    except Exception:
+        pass
 
 
 SAMPLE_DIFF = """\
