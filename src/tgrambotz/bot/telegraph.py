@@ -71,6 +71,9 @@ def _diff_to_nodes(filename: str, additions: int, deletions: int, diff_text: str
     return nodes
 
 
+_CHUNK = 2000  # chars per pre block — well within Telegraph's per-node limit
+
+
 async def create_output_page(
     cmd: str,
     output: str,
@@ -80,24 +83,30 @@ async def create_output_page(
     """Post full command output to Telegraph and return the URL."""
     import json
     token = await _get_token()
-    lines = output.count("\n") + 1
+    line_count = output.count("\n") + 1
     status = "✅ 0" if exit_code == 0 else f"❌ {exit_code}"
 
     nodes = [
         _node("h3", f"$ {cmd}"),
-        _node("p", f"exit {status}  ·  {lines} lines  ·  {elapsed:.1f}s"),
+        _node("p", f"exit {status}  ·  {line_count} lines  ·  {elapsed:.1f}s"),
         _node("hr"),
-        _node("pre", output),
     ]
 
+    # Split into chunks so no single node exceeds Telegraph's limit
+    for i in range(0, len(output), _CHUNK):
+        nodes.append(_node("pre", output[i:i + _CHUNK]))
+
     async with httpx.AsyncClient() as client:
-        r = await client.post(f"{_BASE}/createPage", data={
-            "access_token": token,
-            "title": f"$ {cmd[:60]}",
-            "author_name": "TgramBotz",
-            "content": json.dumps(nodes),
-            "return_content": "false",
-        })
+        r = await client.post(
+            f"{_BASE}/createPage",
+            data={
+                "access_token": token,
+                "title": f"$ {cmd[:60]}",
+                "author_name": "TgramBotz",
+                "content": json.dumps(nodes),
+                "return_content": "false",
+            },
+        )
         r.raise_for_status()
         result = r.json()
         if not result.get("ok"):
