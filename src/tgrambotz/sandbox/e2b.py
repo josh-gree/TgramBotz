@@ -43,23 +43,32 @@ class E2BSandbox(Sandbox):
             self._sandbox = None
 
     async def exec(self, command: str, timeout: float = 60.0) -> AsyncIterator[str]:
+        from e2b.sandbox.commands.command_handle import CommandExitException
         assert self._sandbox, "Not connected to a sandbox"
         queue: asyncio.Queue[str | None] = asyncio.Queue()
 
-        def on_out(output) -> None:
-            queue.put_nowait(output.line)
+        def on_out(output: str) -> None:
+            # output is a raw string — may contain multiple lines
+            for line in output.splitlines():
+                queue.put_nowait(line)
 
         handle = await self._sandbox.commands.run(
             command,
             background=True,
             on_stdout=on_out,
             on_stderr=on_out,
-            timeout=0,  # no connection timeout — we handle it ourselves
+            timeout=0,
         )
 
         async def _collect():
-            await handle.wait()
-            queue.put_nowait(None)  # sentinel
+            try:
+                await handle.wait()
+            except CommandExitException:
+                pass  # non-zero exit — output already captured via callbacks
+            except Exception as exc:
+                log.warning("E2B command error: %s", exc)
+            finally:
+                queue.put_nowait(None)
 
         task = asyncio.create_task(_collect())
         try:
