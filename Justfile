@@ -60,3 +60,29 @@ kill-sandbox id:
 # Start a fresh sandbox and print its ID (useful for manual debugging)
 new-sandbox:
     doppler run -- uv run python scripts/sandboxes.py new
+
+# ── Sandbox-hosted bot ────────────────────────────────────────────────────────
+
+# Start bot inside E2B sandbox — no local process needed after this
+bot-start:
+    doppler run -- uv run python scripts/sandbox_ctl.py start
+
+# Pause sandbox (state preserved, billing stops)
+bot-pause:
+    doppler run -- uv run python scripts/sandbox_ctl.py pause
+
+# Resume sandbox (bot continues from frozen state)
+bot-resume:
+    doppler run -- uv run python scripts/sandbox_ctl.py resume
+
+# Show sandbox status
+bot-status:
+    doppler run -- uv run python scripts/sandbox_ctl.py status
+
+# Tail logs from inside the sandbox (default last 50 lines)
+bot-logs n="50":
+    doppler run -- uv run python scripts/sandbox_ctl.py logs {{ n }}
+
+# Kill sandbox and remove .sandbox-id
+bot-stop:
+    doppler run -- uv run python scripts/sandbox_ctl.py stop

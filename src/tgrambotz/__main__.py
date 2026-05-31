@@ -1,10 +1,10 @@
 import asyncio
 import logging
+import os
 
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters
 
-from tgrambotz.agent import OpenCodeAgent
 from tgrambotz.config import settings
 
 logging.basicConfig(
@@ -15,7 +15,13 @@ log = logging.getLogger(__name__)
 
 
 async def main() -> None:
-    agent = OpenCodeAgent()
+    if os.environ.get("SANDBOX_MODE"):
+        from tgrambotz.local_agent import LocalOpenCodeAgent
+        agent = LocalOpenCodeAgent()
+    else:
+        from tgrambotz.agent import OpenCodeAgent
+        agent = OpenCodeAgent()
+
     await agent.start()
 
     app = Application.builder().token(settings.telegram_token).build()
