@@ -4,12 +4,12 @@ Telegram bot backed by an opencode-ai agent running in an E2B sandbox.
 
 ## Active sandbox
 
-**Sandbox ID:** `inv8w825em5hs1ej2nu9k`
+**Sandbox ID:** `istllf6mvuac02ngv8a9u`
 
 To reconnect after a new session:
 
 ```bash
-echo "inv8w825em5hs1ej2nu9k" > .sandbox-id
+echo "istllf6mvuac02ngv8a9u" > .sandbox-id
 just bot-status   # confirm it's running/paused
 just bot-resume   # if paused
 just bot-logs     # tail logs

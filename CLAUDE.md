@@ -163,7 +163,7 @@ asyncio.run(upload_and_restart())
 
 ## Active sandbox
 
-**Sandbox ID:** `inv8w825em5hs1ej2nu9k`  
+**Sandbox ID:** `istllf6mvuac02ngv8a9u`  
 **Template ID:** `7orp1t31nayml8ndjkhf`
 
 The sandbox was created with `lifecycle={"on_timeout": "pause", "auto_resume": True}` — it auto-pauses on idle rather than terminating. `just bot-stop` permanently kills it; avoid unless starting fresh.
