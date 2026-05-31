@@ -1,4 +1,5 @@
 import asyncio
+import html
 import time
 
 from sqlalchemy import select
@@ -669,7 +670,7 @@ async def on_shell(update: Update, context: ContextTypes.DEFAULT_TYPE, cmd: str)
         vis = visible_lines(lines)
         tail = vis[-15:] if len(vis) > 15 else vis
         prefix = f"… {len(vis) - len(tail)} lines\n" if len(vis) > len(tail) else ""
-        body = prefix + "\n".join(tail) if tail else "…"
+        body = html.escape(prefix + "\n".join(tail)) if tail else "…"
         return f"<code>$ {cmd}</code>  {workspace_label}\n\n<pre>{body}</pre>"
 
     async for all_lines, done in shell.run(cmd):
@@ -694,13 +695,13 @@ async def on_shell(update: Update, context: ContextTypes.DEFAULT_TYPE, cmd: str)
     meta = f"{status}  exit {exit_code if exit_code is not None else '?'}  ·  {len(vis)} lines  ·  {elapsed:.1f}s"
 
     if len(vis) <= INLINE_MAX:
-        body = "\n".join(vis) if vis else "(no output)"
+        body = html.escape("\n".join(vis)) if vis else "(no output)"
         await msg.edit_text(
             parse_mode=ParseMode.HTML,
             text=f"<code>$ {cmd}</code>  {workspace_label}\n\n<pre>{body}</pre>\n\n{meta}",
         )
     else:
-        tail_text = "\n".join(vis[-10:])
+        tail_text = html.escape("\n".join(vis[-10:]))
         try:
             url = await create_output_page(cmd, "\n".join(vis), exit_code, elapsed)
             await msg.edit_text(
