@@ -39,7 +39,7 @@ async def _upload_source(sandbox: AsyncSandbox) -> None:
 
 async def _start_bot_process(sandbox: AsyncSandbox) -> None:
     await sandbox.commands.run(
-        f"python3 -m tgrambotz > {LOG_FILE} 2>&1",
+        f"python3 -u -m tgrambotz > {LOG_FILE} 2>&1",
         background=True,
         timeout=0,
         envs={"PYTHONPATH": REMOTE_PYTHONPATH, "SANDBOX_MODE": "1"},

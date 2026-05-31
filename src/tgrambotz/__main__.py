@@ -23,36 +23,31 @@ def _esc(text: str) -> str:
 
 def _format_tool_html(part: dict, state_type: str, tool_name: str) -> str:
     import json as _json
-    args = part.get("input", part.get("args", {}))
+    state = part.get("state", {}) if isinstance(part.get("state"), dict) else {}
+    args = state.get("input", {})
     args_str = _esc(_json.dumps(args, ensure_ascii=False)[:300]) if args else ""
 
-    if state_type in ("", "pending", "calling"):
-        icon = "⚙️"
-        header = f"{icon} <b>{_esc(tool_name)}</b>"
+    if state_type in ("", "running"):
+        header = f"⚙️ <b>{_esc(tool_name)}</b>"
         if args_str:
             return f"{header}\n<code>{args_str}</code>"
         return header
-    elif state_type == "result":
-        state = part.get("state", {})
-        output = state.get("output", state.get("result", "")) if isinstance(state, dict) else ""
+    elif state_type == "completed":
+        output = state.get("output", "")
         if isinstance(output, dict):
             output = _json.dumps(output, ensure_ascii=False)
         output_str = str(output)[:500]
-        icon = "✅"
-        header = f"{icon} <b>{_esc(tool_name)}</b>"
+        header = f"✅ <b>{_esc(tool_name)}</b>"
         if args_str:
             header += f"\n<code>{args_str}</code>"
         if output_str:
             return f"{header}\n<pre>{_esc(output_str)}</pre>"
         return header
     elif state_type == "error":
-        state = part.get("state", {})
-        err = state.get("error", "") if isinstance(state, dict) else ""
-        icon = "❌"
-        return f"{icon} <b>{_esc(tool_name)}</b>\n<pre>{_esc(str(err)[:300])}</pre>"
+        err = state.get("error", "")
+        return f"❌ <b>{_esc(tool_name)}</b>\n<pre>{_esc(str(err)[:300])}</pre>"
     else:
-        icon = "⚙️"
-        return f"{icon} <b>{_esc(tool_name)}</b>"
+        return f"⚙️ <b>{_esc(tool_name)}</b>"
 
 
 async def main() -> None:
@@ -134,12 +129,12 @@ async def main() -> None:
 
         async def on_tool(part: dict) -> None:
             first_output.set()
-            pid = part.get("id", "")
+            pid = part.get("callID", part.get("id", ""))
             if not pid:
                 return
             state = part.get("state", {})
-            state_type = state.get("type", "") if isinstance(state, dict) else ""
-            tool_name = part.get("toolName", part.get("tool", "tool"))
+            state_type = state.get("status", "") if isinstance(state, dict) else ""
+            tool_name = part.get("tool", part.get("toolName", "tool"))
             html = _format_tool_html(part, state_type, tool_name)
             if pid not in tool_msg_ids:
                 try:

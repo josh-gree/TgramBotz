@@ -118,11 +118,13 @@ class LocalOpenCodeAgent:
                             pid = part.get("id", "")
                             if ptype in ("reasoning", "text") and pid:
                                 part_types[pid] = ptype
-                            elif ptype == "tool-invocation" and pid and on_tool:
-                                try:
-                                    await on_tool(part)
-                                except Exception as e:
-                                    log.warning("on_tool error: %s", e)
+                            elif ptype == "tool":
+                                cid = part.get("callID", "")
+                                if cid and on_tool:
+                                    try:
+                                        await on_tool(part)
+                                    except Exception as e:
+                                        log.warning("on_tool error: %s", e)
 
                         elif etype == "message.part.delta" and saw_busy:
                             pid = props.get("partID", "")
