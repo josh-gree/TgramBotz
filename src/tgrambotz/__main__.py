@@ -21,6 +21,40 @@ def _esc(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _format_tool_html(part: dict, state_type: str, tool_name: str) -> str:
+    import json as _json
+    args = part.get("input", part.get("args", {}))
+    args_str = _esc(_json.dumps(args, ensure_ascii=False)[:300]) if args else ""
+
+    if state_type in ("", "pending", "calling"):
+        icon = "⚙️"
+        header = f"{icon} <b>{_esc(tool_name)}</b>"
+        if args_str:
+            return f"{header}\n<code>{args_str}</code>"
+        return header
+    elif state_type == "result":
+        state = part.get("state", {})
+        output = state.get("output", state.get("result", "")) if isinstance(state, dict) else ""
+        if isinstance(output, dict):
+            output = _json.dumps(output, ensure_ascii=False)
+        output_str = str(output)[:500]
+        icon = "✅"
+        header = f"{icon} <b>{_esc(tool_name)}</b>"
+        if args_str:
+            header += f"\n<code>{args_str}</code>"
+        if output_str:
+            return f"{header}\n<pre>{_esc(output_str)}</pre>"
+        return header
+    elif state_type == "error":
+        state = part.get("state", {})
+        err = state.get("error", "") if isinstance(state, dict) else ""
+        icon = "❌"
+        return f"{icon} <b>{_esc(tool_name)}</b>\n<pre>{_esc(str(err)[:300])}</pre>"
+    else:
+        icon = "⚙️"
+        return f"{icon} <b>{_esc(tool_name)}</b>"
+
+
 async def main() -> None:
     if os.environ.get("SANDBOX_MODE"):
         from tgrambotz.local_agent import LocalOpenCodeAgent
@@ -61,6 +95,9 @@ async def main() -> None:
         response_buf: list[str] = []
         response_last_edit = 0.0
 
+        # Tool call state: partID → message_id
+        tool_msg_ids: dict[str, int] = {}
+
         async def on_reasoning_delta(delta: str) -> None:
             nonlocal reasoning_msg_id, reasoning_last_edit
             first_output.set()
@@ -95,10 +132,32 @@ async def main() -> None:
                 except Exception:
                     pass
 
+        async def on_tool(part: dict) -> None:
+            first_output.set()
+            pid = part.get("id", "")
+            if not pid:
+                return
+            state = part.get("state", {})
+            state_type = state.get("type", "") if isinstance(state, dict) else ""
+            tool_name = part.get("toolName", part.get("tool", "tool"))
+            html = _format_tool_html(part, state_type, tool_name)
+            if pid not in tool_msg_ids:
+                try:
+                    sent = await context.bot.send_message(chat_id, html, parse_mode="HTML")
+                    tool_msg_ids[pid] = sent.message_id
+                except Exception as e:
+                    log.warning("tool send error: %s", e)
+            else:
+                try:
+                    await context.bot.edit_message_text(html, chat_id, tool_msg_ids[pid], parse_mode="HTML")
+                except Exception:
+                    pass
+
         await agent.chat(
             msg_text,
             on_reasoning_delta=on_reasoning_delta,
             on_text_delta=on_text_delta,
+            on_tool=on_tool,
         )
         typing_task.cancel()
 
