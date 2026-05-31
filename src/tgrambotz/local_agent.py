@@ -26,7 +26,16 @@ class LocalOpenCodeAgent:
         cfg_dir = os.path.expanduser("~/.config/opencode")
         os.makedirs(cfg_dir, exist_ok=True)
         with open(os.path.join(cfg_dir, "opencode.json"), "w") as f:
-            json.dump({"permission": "allow"}, f)
+            json.dump({
+                "permission": "allow",
+                "instructions": [
+                    "Work autonomously and completely. "
+                    "Do not stop mid-task to ask for confirmation or check in. "
+                    "Complete the entire task end-to-end — write all files, run all commands, "
+                    "verify everything works — then give one final summary when fully done. "
+                    "Never pause and ask 'shall I continue?' or 'would you like me to proceed?'."
+                ],
+            }, f)
 
         try:
             kill = await asyncio.create_subprocess_exec(
@@ -82,11 +91,12 @@ class LocalOpenCodeAgent:
             part_types: dict[str, str] = {}  # partID → "reasoning" | "text"
 
             async def _listen() -> None:
-                async with self._http.stream(
+                try:
+                  async with self._http.stream(
                     "GET",
                     f"{_BASE}/event",
                     params={"sessionID": self._session_id, "directory": _DIR},
-                ) as resp:
+                  ) as resp:
                     saw_busy = False
                     async for line in resp.aiter_lines():
                         if not line.startswith("data: "):
@@ -146,6 +156,11 @@ class LocalOpenCodeAgent:
                         elif etype == "session.idle" and saw_busy:
                             done.set()
                             return
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    log.warning("SSE stream error: %s", e)
+                    done.set()
 
             listener = asyncio.create_task(_listen())
             # Wait for SSE handshake before sending prompt
