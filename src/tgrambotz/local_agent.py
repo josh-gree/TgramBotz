@@ -19,6 +19,7 @@ class LocalOpenCodeAgent:
         self._lock = asyncio.Lock()
         self._proc = None
         self._session_id: str | None = None
+        self._http: httpx.AsyncClient | None = None
 
     async def start(self) -> None:
         try:
@@ -39,25 +40,26 @@ class LocalOpenCodeAgent:
             env={**os.environ, "OPENROUTER_API_KEY": settings.openrouter_api_key},
         )
 
-        async with httpx.AsyncClient() as client:
-            for _ in range(40):
-                try:
-                    r = await client.get(f"{_BASE}/global/health")
-                    if r.status_code == 200:
-                        break
-                except httpx.TransportError:
-                    pass
-                await asyncio.sleep(0.25)
-            else:
-                raise RuntimeError("opencode server failed to start")
+        # Persistent client — reuses TCP connections for all requests
+        self._http = httpx.AsyncClient(timeout=httpx.Timeout(300))
 
-        async with httpx.AsyncClient() as client:
-            r = await client.post(
-                f"{_BASE}/session",
-                params={"directory": _DIR},
-                json={},
-            )
-            self._session_id = r.json()["id"]
+        for _ in range(40):
+            try:
+                r = await self._http.get(f"{_BASE}/global/health")
+                if r.status_code == 200:
+                    break
+            except httpx.TransportError:
+                pass
+            await asyncio.sleep(0.25)
+        else:
+            raise RuntimeError("opencode server failed to start")
+
+        r = await self._http.post(
+            f"{_BASE}/session",
+            params={"directory": _DIR},
+            json={},
+        )
+        self._session_id = r.json()["id"]
 
         log.info("opencode server ready, session=%s", self._session_id)
 
@@ -70,79 +72,82 @@ class LocalOpenCodeAgent:
     ) -> None:
         async with self._lock:
             done = asyncio.Event()
+            connected = asyncio.Event()
             part_types: dict[str, str] = {}  # partID → "reasoning" | "text"
 
             async def _listen() -> None:
-                async with httpx.AsyncClient(timeout=httpx.Timeout(300)) as client:
-                    async with client.stream(
-                        "GET",
-                        f"{_BASE}/event",
-                        params={"sessionID": self._session_id, "directory": _DIR},
-                    ) as resp:
-                        saw_busy = False
-                        async for line in resp.aiter_lines():
-                            if not line.startswith("data: "):
+                async with self._http.stream(
+                    "GET",
+                    f"{_BASE}/event",
+                    params={"sessionID": self._session_id, "directory": _DIR},
+                ) as resp:
+                    saw_busy = False
+                    async for line in resp.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        try:
+                            evt = json.loads(line[6:])
+                        except json.JSONDecodeError:
+                            continue
+
+                        etype = evt.get("type", "")
+                        props = evt.get("properties", {})
+
+                        if etype == "server.connected":
+                            connected.set()
+                            continue
+                        if etype == "server.heartbeat":
+                            continue
+
+                        if etype == "session.status":
+                            if props.get("status", {}).get("type") == "busy":
+                                saw_busy = True
+
+                        elif etype == "message.part.updated" and saw_busy:
+                            part = props.get("part", {})
+                            ptype = part.get("type", "")
+                            pid = part.get("id", "")
+                            if ptype in ("reasoning", "text") and pid:
+                                part_types[pid] = ptype
+
+                        elif etype == "message.part.delta" and saw_busy:
+                            pid = props.get("partID", "")
+                            ptype = part_types.get(pid, "")
+                            delta = props.get("delta", "")
+                            if not delta:
                                 continue
-                            try:
-                                evt = json.loads(line[6:])
-                            except json.JSONDecodeError:
-                                continue
+                            if ptype == "reasoning" and on_reasoning_delta:
+                                try:
+                                    await on_reasoning_delta(delta)
+                                except Exception as e:
+                                    log.warning("on_reasoning_delta error: %s", e)
+                            elif ptype == "text" and on_text_delta:
+                                try:
+                                    await on_text_delta(delta)
+                                except Exception as e:
+                                    log.warning("on_text_delta error: %s", e)
 
-                            etype = evt.get("type", "")
-                            props = evt.get("properties", {})
-
-                            if etype in ("server.heartbeat", "server.connected"):
-                                continue
-
-                            if etype == "session.status":
-                                if props.get("status", {}).get("type") == "busy":
-                                    saw_busy = True
-
-                            elif etype == "message.part.updated" and saw_busy:
-                                part = props.get("part", {})
-                                ptype = part.get("type", "")
-                                pid = part.get("id", "")
-                                if ptype in ("reasoning", "text") and pid:
-                                    part_types[pid] = ptype
-
-                            elif etype == "message.part.delta" and saw_busy:
-                                pid = props.get("partID", "")
-                                ptype = part_types.get(pid, "")
-                                delta = props.get("delta", "")
-                                if not delta:
-                                    continue
-                                if ptype == "reasoning" and on_reasoning_delta:
-                                    try:
-                                        await on_reasoning_delta(delta)
-                                    except Exception as e:
-                                        log.warning("on_reasoning_delta error: %s", e)
-                                elif ptype == "text" and on_text_delta:
-                                    try:
-                                        await on_text_delta(delta)
-                                    except Exception as e:
-                                        log.warning("on_text_delta error: %s", e)
-
-                            elif etype == "session.idle" and saw_busy:
-                                done.set()
-                                return
+                        elif etype == "session.idle" and saw_busy:
+                            done.set()
+                            return
 
             listener = asyncio.create_task(_listen())
-            await asyncio.sleep(0.3)
+            # Wait for SSE handshake before sending prompt
+            await asyncio.wait_for(connected.wait(), timeout=5)
 
             model_str = settings.openrouter_model
             parts = model_str.split("/", 1)
             provider_id = parts[0]
             model_id = parts[1] if len(parts) > 1 else model_str
 
-            async with httpx.AsyncClient() as client:
-                await client.post(
-                    f"{_BASE}/session/{self._session_id}/prompt_async",
-                    params={"directory": _DIR},
-                    json={
-                        "parts": [{"type": "text", "text": message}],
-                        "model": {"providerID": provider_id, "modelID": model_id},
-                    },
-                )
+            await self._http.post(
+                f"{_BASE}/session/{self._session_id}/prompt_async",
+                params={"directory": _DIR},
+                json={
+                    "parts": [{"type": "text", "text": message}],
+                    "model": {"providerID": provider_id, "modelID": model_id},
+                },
+            )
 
             try:
                 await asyncio.wait_for(done.wait(), timeout=120)
@@ -156,6 +161,8 @@ class LocalOpenCodeAgent:
                     pass
 
     async def stop(self) -> None:
+        if self._http:
+            await self._http.aclose()
         if self._proc:
             self._proc.terminate()
             await self._proc.wait()

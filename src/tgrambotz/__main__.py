@@ -40,6 +40,18 @@ async def main() -> None:
 
         await context.bot.send_chat_action(chat_id, "typing")
 
+        # Keep typing indicator alive every 4s until first message arrives
+        first_output = asyncio.Event()
+        async def _keep_typing():
+            while not first_output.is_set():
+                await asyncio.sleep(4)
+                if not first_output.is_set():
+                    try:
+                        await context.bot.send_chat_action(chat_id, "typing")
+                    except Exception:
+                        pass
+        typing_task = asyncio.create_task(_keep_typing())
+
         # Streaming state for reasoning and response
         reasoning_msg_id = None
         reasoning_buf: list[str] = []
@@ -51,6 +63,7 @@ async def main() -> None:
 
         async def on_reasoning_delta(delta: str) -> None:
             nonlocal reasoning_msg_id, reasoning_last_edit
+            first_output.set()
             reasoning_buf.append(delta)
             html = f"<blockquote>💭 {_esc(''.join(reasoning_buf))}</blockquote>"
             now = time.monotonic()
@@ -67,6 +80,7 @@ async def main() -> None:
 
         async def on_text_delta(delta: str) -> None:
             nonlocal response_msg_id, response_last_edit
+            first_output.set()
             response_buf.append(delta)
             full = "".join(response_buf)
             now = time.monotonic()
@@ -86,6 +100,7 @@ async def main() -> None:
             on_reasoning_delta=on_reasoning_delta,
             on_text_delta=on_text_delta,
         )
+        typing_task.cancel()
 
         # Final edits to ensure complete content is shown
         if reasoning_msg_id and reasoning_buf:
