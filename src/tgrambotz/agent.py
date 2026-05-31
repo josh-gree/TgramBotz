@@ -62,7 +62,7 @@ class OpenCodeAgent:
     async def chat(self, message: str) -> str:
         async with self._lock:
             quoted = shlex.quote(message)
-            cmd = f"opencode run --continue -m {settings.openrouter_model} {quoted} 2>&1"
+            cmd = f"opencode run --continue --dangerously-skip-permissions -m {settings.openrouter_model} {quoted} 2>&1"
             raw = await self._exec(cmd, timeout=RESPONSE_TIMEOUT)
             return _clean(raw) or "(no response)"
 
