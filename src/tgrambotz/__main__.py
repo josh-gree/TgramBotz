@@ -8,7 +8,7 @@ from telegram.ext import Application, MessageHandler, filters
 from tgrambotz.config import settings
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s %(levelname)s %(name)s — %(message)s",
 )
 log = logging.getLogger(__name__)
