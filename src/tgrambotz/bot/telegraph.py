@@ -71,9 +71,6 @@ def _diff_to_nodes(filename: str, additions: int, deletions: int, diff_text: str
     return nodes
 
 
-_MAX_CHARS = 50_000
-
-
 async def create_output_page(
     cmd: str,
     output: str,
@@ -89,20 +86,12 @@ async def create_output_page(
     line_count = output.count("\n") + 1
     status = "✅ 0" if exit_code == 0 else f"❌ {exit_code}"
 
-    truncated = len(output) > _MAX_CHARS
-    if truncated:
-        # Truncate cleanly at a line boundary
-        output = output[:_MAX_CHARS].rsplit("\n", 1)[0]
-
     nodes: list = [
         _node("h3", f"$ {cmd}"),
         _node("p", f"exit {status}  ·  {line_count} lines  ·  {elapsed:.1f}s"),
         _node("hr"),
         _node("pre", output),
     ]
-
-    if truncated:
-        nodes.append(_node("p", f"⚠️ Output truncated at {_MAX_CHARS:,} chars"))
 
     content_json = json.dumps(nodes)
     log.info("Telegraph createPage: %d chars", len(content_json))
