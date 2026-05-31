@@ -22,6 +22,12 @@ class LocalOpenCodeAgent:
         self._http: httpx.AsyncClient | None = None
 
     async def start(self) -> None:
+        # Write opencode config to auto-approve all permissions
+        cfg_dir = os.path.expanduser("~/.config/opencode")
+        os.makedirs(cfg_dir, exist_ok=True)
+        with open(os.path.join(cfg_dir, "opencode.json"), "w") as f:
+            json.dump({"permission": "allow"}, f)
+
         try:
             kill = await asyncio.create_subprocess_exec(
                 "pkill", "-f", "opencode serve",
