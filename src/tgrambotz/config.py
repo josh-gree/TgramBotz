@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     telegram_token: str
     e2b_api_key: str
     openrouter_api_key: str = ""
-    openrouter_model: str = "deepseek/deepseek-chat-v4-flash"
+    openrouter_model: str = "openrouter/deepseek/deepseek-v4-flash"
 
 
 settings = Settings()
