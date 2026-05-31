@@ -29,6 +29,12 @@ doppler-auth:
 auth:
     doppler run -- uv run python scripts/check_auth.py
 
+# ── E2B Template ──────────────────────────────────────────────────────────────
+
+# Rebuild the E2B sandbox template (requires e2b CLI: npm i -g @e2b/cli)
+template-build:
+    e2b template build --dockerfile e2b.Dockerfile
+
 # ── Bot ───────────────────────────────────────────────────────────────────────
 
 # Run the bot in the foreground (Ctrl+C to stop); tees output to bot.log

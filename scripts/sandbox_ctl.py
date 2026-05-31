@@ -64,13 +64,6 @@ async def cmd_start() -> None:
     SANDBOX_ID_FILE.write_text(sandbox.sandbox_id)
     print(f"  Sandbox: {sandbox.sandbox_id}")
 
-    print("Installing dependencies...")
-    await sandbox.commands.run(
-        "pip install -q python-telegram-bot pydantic-settings 2>&1",
-        timeout=120,
-    )
-    print("  Done.")
-
     print("Uploading source...")
     await _upload_source(sandbox)
 
