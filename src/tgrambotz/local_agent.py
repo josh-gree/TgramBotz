@@ -64,7 +64,10 @@ class LocalOpenCodeAgent:
     async def chat(self, message: str, on_tool=None, on_text=None) -> None:
         async with self._lock:
             done = asyncio.Event()
-            raw_events: list[str] = []
+            reasoning_events: list[str] = []
+            text_events: list[str] = []
+            # map partID → "reasoning" | "text"
+            part_types: dict[str, str] = {}
 
             async def _listen() -> None:
                 async with httpx.AsyncClient(timeout=httpx.Timeout(300)) as client:
@@ -80,23 +83,36 @@ class LocalOpenCodeAgent:
                             try:
                                 evt = json.loads(line[6:])
                             except json.JSONDecodeError:
-                                log.debug("SSE non-JSON line: %s", line[:200])
                                 continue
 
                             etype = evt.get("type", "")
                             log.debug("SSE event: %s", json.dumps(evt)[:500])
 
-                            # Skip heartbeats
                             if etype in ("server.heartbeat", "server.connected"):
                                 continue
-
-                            raw_events.append(json.dumps(evt))
 
                             props = evt.get("properties", {})
 
                             if etype == "session.status":
                                 if props.get("status", {}).get("type") == "busy":
                                     saw_busy = True
+
+                            elif etype == "message.part.updated" and saw_busy:
+                                part = props.get("part", {})
+                                ptype = part.get("type", "")
+                                pid = part.get("id", "")
+                                if ptype in ("reasoning", "text") and pid:
+                                    part_types[pid] = ptype
+                                    bucket = reasoning_events if ptype == "reasoning" else text_events
+                                    bucket.append(json.dumps(evt))
+
+                            elif etype == "message.part.delta" and saw_busy:
+                                pid = props.get("partID", "")
+                                ptype = part_types.get(pid, "")
+                                if ptype == "reasoning":
+                                    reasoning_events.append(json.dumps(evt))
+                                elif ptype == "text":
+                                    text_events.append(json.dumps(evt))
 
                             elif etype == "session.idle" and saw_busy:
                                 done.set()
@@ -132,28 +148,24 @@ class LocalOpenCodeAgent:
                 except asyncio.CancelledError:
                     pass
 
-            # Send all raw events to Telegram for inspection
-            if on_text and raw_events:
+            async def _send_bucket(label: str, events: list[str]) -> None:
+                if not events or not on_text:
+                    return
                 chunk: list[str] = []
                 chunk_len = 0
-                for evt_str in raw_events:
+                for evt_str in events:
                     line = evt_str + "\n"
                     if chunk_len + len(line) > 3800:
-                        try:
-                            await on_text("```\n" + "".join(chunk) + "```")
-                        except Exception as e:
-                            log.warning("on_text error: %s", e)
+                        await on_text(f"*{label}*\n```\n" + "".join(chunk) + "```")
                         chunk = []
                         chunk_len = 0
                     chunk.append(line)
                     chunk_len += len(line)
                 if chunk:
-                    try:
-                        await on_text("```\n" + "".join(chunk) + "```")
-                    except Exception as e:
-                        log.warning("on_text error: %s", e)
-            elif on_text:
-                await on_text("(no events received)")
+                    await on_text(f"*{label}*\n```\n" + "".join(chunk) + "```")
+
+            await _send_bucket("reasoning", reasoning_events)
+            await _send_bucket("response", text_events)
 
     async def stop(self) -> None:
         if self._proc:
