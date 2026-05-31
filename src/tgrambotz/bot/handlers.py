@@ -709,11 +709,12 @@ async def on_shell(update: Update, context: ContextTypes.DEFAULT_TYPE, cmd: str)
                     InlineKeyboardButton("👁 View Full Output", url=url),
                 ]]),
             )
-        except Exception:
-            # Telegraph failed — fall back to truncated inline
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).exception("Telegraph failed for shell output: %s", e)
             await msg.edit_text(
                 parse_mode=ParseMode.HTML,
-                text=f"<code>$ {cmd}</code>\n\n<pre>{tail_text}</pre>\n\n{meta}",
+                text=f"<code>$ {cmd}</code>\n\n<pre>{tail_text}</pre>\n\n{meta}\n<i>⚠️ Full output unavailable</i>",
             )
 
 

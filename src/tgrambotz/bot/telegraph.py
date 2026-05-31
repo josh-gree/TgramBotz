@@ -71,7 +71,8 @@ def _diff_to_nodes(filename: str, additions: int, deletions: int, diff_text: str
     return nodes
 
 
-_CHUNK = 2000  # chars per pre block — well within Telegraph's per-node limit
+_CHUNK = 2000       # chars per pre block
+_MAX_CONTENT = 50_000  # Telegraph's effective content limit
 
 
 async def create_output_page(
@@ -82,19 +83,32 @@ async def create_output_page(
 ) -> str:
     """Post full command output to Telegraph and return the URL."""
     import json
+    import logging
+    log = logging.getLogger(__name__)
+
     token = await _get_token()
     line_count = output.count("\n") + 1
     status = "✅ 0" if exit_code == 0 else f"❌ {exit_code}"
 
-    nodes = [
+    truncated = False
+    if len(output) > _MAX_CONTENT:
+        output = output[:_MAX_CONTENT]
+        truncated = True
+
+    nodes: list = [
         _node("h3", f"$ {cmd}"),
         _node("p", f"exit {status}  ·  {line_count} lines  ·  {elapsed:.1f}s"),
         _node("hr"),
     ]
 
-    # Split into chunks so no single node exceeds Telegraph's limit
     for i in range(0, len(output), _CHUNK):
         nodes.append(_node("pre", output[i:i + _CHUNK]))
+
+    if truncated:
+        nodes.append(_node("p", f"⚠️ Output truncated at {_MAX_CONTENT:,} chars"))
+
+    content_json = json.dumps(nodes)
+    log.info("Telegraph createPage: %d nodes, %d chars of JSON", len(nodes), len(content_json))
 
     async with httpx.AsyncClient() as client:
         r = await client.post(
@@ -103,7 +117,7 @@ async def create_output_page(
                 "access_token": token,
                 "title": f"$ {cmd[:60]}",
                 "author_name": "TgramBotz",
-                "content": json.dumps(nodes),
+                "content": content_json,
                 "return_content": "false",
             },
         )
@@ -111,7 +125,9 @@ async def create_output_page(
         result = r.json()
         if not result.get("ok"):
             raise RuntimeError(f"Telegraph error: {result}")
-        return result["result"]["url"]
+        url = result["result"]["url"]
+        log.info("Telegraph page created: %s", url)
+        return url
 
 
 async def create_file_page(filename: str, content: str) -> str:
