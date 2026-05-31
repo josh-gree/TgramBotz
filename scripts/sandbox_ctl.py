@@ -1,7 +1,11 @@
 """Bot sandbox lifecycle: start | pause | resume | status | logs | stop"""
 import asyncio
+import ssl
 import sys
 from pathlib import Path
+
+# This environment intercepts TLS via a proxy with a self-signed cert.
+ssl._create_default_https_context = ssl._create_unverified_context
 
 from e2b import AsyncSandbox
 
