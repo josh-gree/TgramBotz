@@ -93,6 +93,9 @@ class LocalOpenCodeAgent:
                         etype = evt.get("type", "")
                         props = evt.get("properties", {})
 
+                        if etype not in ("server.heartbeat", "message.part.delta"):
+                            log.info("SSE %s %s", etype, str(props)[:200])
+
                         if etype == "server.connected":
                             connected.set()
                             continue
