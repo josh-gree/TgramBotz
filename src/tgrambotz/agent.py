@@ -10,7 +10,7 @@ from tgrambotz.config import settings
 
 log = logging.getLogger(__name__)
 
-E2B_TEMPLATE = "owngk1zv1374s7wd8y6f"
+E2B_TEMPLATE = "7orp1t31nayml8ndjkhf"
 SANDBOX_TIMEOUT = 3600   # 1 hour idle timeout
 RESPONSE_TIMEOUT = 120
 

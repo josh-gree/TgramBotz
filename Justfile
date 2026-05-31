@@ -31,9 +31,9 @@ auth:
 
 # ── E2B Template ──────────────────────────────────────────────────────────────
 
-# Rebuild the E2B sandbox template (requires e2b CLI: npm i -g @e2b/cli)
+# Rebuild the E2B sandbox template via Python SDK
 template-build:
-    e2b template build --dockerfile e2b.Dockerfile
+    doppler run -- uv run python scripts/build_template.py
 
 # ── Bot ───────────────────────────────────────────────────────────────────────
 
