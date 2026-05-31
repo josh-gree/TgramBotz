@@ -28,12 +28,14 @@ class LocalOpenCodeAgent:
         with open(os.path.join(cfg_dir, "opencode.json"), "w") as f:
             json.dump({
                 "permission": "allow",
+                "tools": {"question": False},
                 "instructions": [
                     "Work autonomously and completely. "
                     "Do not stop mid-task to ask for confirmation or check in. "
                     "Complete the entire task end-to-end — write all files, run all commands, "
                     "verify everything works — then give one final summary when fully done. "
-                    "Never pause and ask 'shall I continue?' or 'would you like me to proceed?'."
+                    "Never pause and ask 'shall I continue?' or 'would you like me to proceed?'. "
+                    "Make your best judgment based on available context."
                 ],
             }, f)
 
