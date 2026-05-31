@@ -71,49 +71,79 @@ def _diff_to_nodes(filename: str, additions: int, deletions: int, diff_text: str
     return nodes
 
 
+_PAGE_CHAR_LIMIT = 40_000  # conservative — Telegraph's JSON limit is ~64KB
+
+
+async def _post_page(token: str, title: str, nodes: list) -> str:
+    import json
+    async with httpx.AsyncClient() as client:
+        r = await client.post(f"{_BASE}/createPage", data={
+            "access_token": token,
+            "title": title[:256],
+            "author_name": "TgramBotz",
+            "content": json.dumps(nodes),
+            "return_content": "false",
+        })
+        r.raise_for_status()
+        result = r.json()
+        if not result.get("ok"):
+            raise RuntimeError(f"Telegraph error: {result}")
+        return result["result"]["url"]
+
+
 async def create_output_page(
     cmd: str,
     output: str,
     exit_code: int | None,
     elapsed: float,
 ) -> str:
-    """Post full command output to Telegraph and return the URL."""
-    import json
+    """Post full command output to Telegraph, splitting into linked pages if needed."""
     import logging
     log = logging.getLogger(__name__)
 
     token = await _get_token()
     line_count = output.count("\n") + 1
     status = "✅ 0" if exit_code == 0 else f"❌ {exit_code}"
+    header = f"exit {status}  ·  {line_count} lines  ·  {elapsed:.1f}s"
 
-    nodes: list = [
-        _node("h3", f"$ {cmd}"),
-        _node("p", f"exit {status}  ·  {line_count} lines  ·  {elapsed:.1f}s"),
-        _node("hr"),
-        _node("pre", output),
-    ]
+    # Split output into line-boundary chunks that fit under the page limit
+    lines = output.splitlines()
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for line in lines:
+        if current_len + len(line) + 1 > _PAGE_CHAR_LIMIT and current:
+            chunks.append("\n".join(current))
+            current, current_len = [], 0
+        current.append(line)
+        current_len += len(line) + 1
+    if current:
+        chunks.append("\n".join(current))
 
-    content_json = json.dumps(nodes)
-    log.info("Telegraph createPage: %d chars", len(content_json))
+    total = len(chunks)
+    log.info("Telegraph: %d chunk(s) for %d lines", total, line_count)
 
-    async with httpx.AsyncClient() as client:
-        r = await client.post(
-            f"{_BASE}/createPage",
-            data={
-                "access_token": token,
-                "title": f"$ {cmd[:60]}",
-                "author_name": "TgramBotz",
-                "content": content_json,
-                "return_content": "false",
-            },
-        )
-        r.raise_for_status()
-        result = r.json()
-        if not result.get("ok"):
-            raise RuntimeError(f"Telegraph error: {result}")
-        url = result["result"]["url"]
-        log.info("Telegraph page created: %s", url)
-        return url
+    # Create pages back-to-front so each page can link to the next
+    urls: list[str] = [""] * total
+    for i in range(total - 1, -1, -1):
+        part_label = f"Part {i+1}/{total}" if total > 1 else ""
+        title = f"$ {cmd[:50]}  {part_label}".strip()
+        nodes: list = []
+        if i == 0:
+            nodes += [
+                _node("h3", f"$ {cmd}"),
+                _node("p", header),
+                _node("hr"),
+            ]
+        else:
+            nodes.append(_node("p", _node("b", f"Part {i+1} of {total}")))
+        nodes.append(_node("pre", chunks[i]))
+        if i < total - 1:
+            nodes.append(_node("p", _node("a", f"→ Part {i+2}", attrs={"href": urls[i+1]})))
+        urls[i] = await _post_page(token, title, nodes)
+        log.info("Telegraph page %d/%d: %s", i + 1, total, urls[i])
+
+    return urls[0]
 
 
 async def create_file_page(filename: str, content: str) -> str:
