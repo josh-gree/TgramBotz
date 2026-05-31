@@ -1,41 +1,21 @@
-"""Persistent bash shell session — one per chat."""
+"""Shell sessions — local (dev) or E2B-backed (production)."""
 import asyncio
 import time
 import uuid
-from dataclasses import dataclass, field
 from typing import AsyncIterator
 
-
-LIVE_TAIL = 15       # lines shown live during streaming
-INLINE_MAX = 30      # lines shown inline in final message (no button needed)
-
-
-@dataclass
-class RunResult:
-    cmd: str
-    lines: list[str] = field(default_factory=list)
-    exit_code: int | None = None
-    elapsed: float = 0.0
-
-    @property
-    def output(self) -> str:
-        return "\n".join(self.lines)
-
-    @property
-    def tail(self) -> str:
-        return "\n".join(self.lines[-LIVE_TAIL:])
-
-    @property
-    def needs_telegraph(self) -> bool:
-        return len(self.lines) > INLINE_MAX
+LIVE_TAIL = 15
+INLINE_MAX = 30
 
 
-class ShellSession:
+class LocalShellSession:
+    """Persistent bash process running locally — used when no workspace/sandbox."""
+
     def __init__(self):
         self._proc: asyncio.subprocess.Process | None = None
         self._lock = asyncio.Lock()
 
-    async def ensure_started(self) -> None:
+    async def _ensure(self) -> None:
         if self._proc is None or self._proc.returncode is not None:
             self._proc = await asyncio.create_subprocess_exec(
                 "bash", "--norc", "--noprofile",
@@ -46,24 +26,16 @@ class ShellSession:
             )
 
     async def run(self, cmd: str, timeout: float = 60.0) -> AsyncIterator[tuple[list[str], bool]]:
-        """Yields (all_lines_so_far, is_done) as output arrives."""
         async with self._lock:
-            await self.ensure_started()
-
+            await self._ensure()
             marker = f"__END_{uuid.uuid4().hex}__"
             exit_marker = f"__EXIT_{uuid.uuid4().hex}__"
-            payload = (
-                f"{cmd}\n"
-                f"echo {exit_marker}$?\n"
-                f"echo {marker}\n"
-            ).encode()
+            payload = f"{cmd}\necho {exit_marker}$?\necho {marker}\n".encode()
             self._proc.stdin.write(payload)
             await self._proc.stdin.drain()
 
             lines: list[str] = []
-            exit_code: int | None = None
-            start = time.monotonic()
-            deadline = start + timeout
+            deadline = time.monotonic() + timeout
 
             while True:
                 remaining = deadline - time.monotonic()
@@ -72,29 +44,22 @@ class ShellSession:
                     yield lines, True
                     return
                 try:
-                    raw = await asyncio.wait_for(
-                        self._proc.stdout.readline(), timeout=min(remaining, 5.0)
-                    )
+                    raw = await asyncio.wait_for(self._proc.stdout.readline(), timeout=min(remaining, 5.0))
                 except asyncio.TimeoutError:
                     yield lines, False
                     continue
-
                 if not raw:
                     yield lines, True
                     return
-
                 text = raw.decode(errors="replace").rstrip("\n")
-
                 if text == marker:
                     yield lines, True
                     return
                 elif text.startswith(exit_marker):
                     try:
-                        exit_code = int(text[len(exit_marker):])
+                        lines.append(f"\x00exit:{int(text[len(exit_marker):])}")
                     except ValueError:
                         pass
-                    # attach exit code as last pseudo-line so callers can read it
-                    lines.append(f"\x00exit:{exit_code}")
                 else:
                     lines.append(text)
                     yield lines, False
@@ -106,11 +71,64 @@ class ShellSession:
             self._proc = None
 
 
-# One session per chat_id
-_sessions: dict[int, ShellSession] = {}
+class E2BShellSession:
+    """Shell session backed by an E2B sandbox."""
+
+    def __init__(self, session_id: int, e2b_sandbox_id: str | None):
+        self.session_id = session_id
+        self.e2b_sandbox_id = e2b_sandbox_id
+        self._lock = asyncio.Lock()
+
+    async def run(self, cmd: str, timeout: float = 60.0) -> AsyncIterator[tuple[list[str], bool]]:
+        from tgrambotz.sandbox.e2b import get_or_create_sandbox
+        from tgrambotz.db.database import async_session_factory
+        from tgrambotz.db.models import Session as DBSession
+        from sqlmodel import select
+
+        async with self._lock:
+            sb = await get_or_create_sandbox(self.session_id, self.e2b_sandbox_id)
+
+            # Persist new sandbox_id back to DB if it was just created
+            if sb.sandbox_id and sb.sandbox_id != self.e2b_sandbox_id:
+                self.e2b_sandbox_id = sb.sandbox_id
+                try:
+                    async with async_session_factory() as db:
+                        result = await db.execute(select(DBSession).where(DBSession.id == self.session_id))
+                        sess = result.scalar_one_or_none()
+                        if sess:
+                            sess.e2b_sandbox_id = sb.sandbox_id
+                            await db.commit()
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception("Failed to persist sandbox_id")
+
+            lines: list[str] = []
+            # Wrap exec() into the (lines, done) tuple format
+            async for line in sb.exec(cmd, timeout=timeout):
+                lines.append(line)
+                yield lines, False
+            yield lines, True
+
+    async def kill(self) -> None:
+        from tgrambotz.sandbox.e2b import _sandboxes
+        sb = _sandboxes.pop(self.session_id, None)
+        if sb:
+            await sb.stop()
 
 
-def get_session(chat_id: int) -> ShellSession:
-    if chat_id not in _sessions:
-        _sessions[chat_id] = ShellSession()
-    return _sessions[chat_id]
+# ── Session registry ──────────────────────────────────────────────────────────
+
+_local_sessions: dict[int, LocalShellSession] = {}  # chat_id → session (no workspace)
+_e2b_sessions: dict[int, E2BShellSession] = {}      # session_id → E2B session
+
+
+def get_local_session(chat_id: int) -> LocalShellSession:
+    if chat_id not in _local_sessions:
+        _local_sessions[chat_id] = LocalShellSession()
+    return _local_sessions[chat_id]
+
+
+def get_e2b_session(session_id: int, e2b_sandbox_id: str | None) -> E2BShellSession:
+    if session_id not in _e2b_sessions:
+        _e2b_sessions[session_id] = E2BShellSession(session_id, e2b_sandbox_id)
+    return _e2b_sessions[session_id]

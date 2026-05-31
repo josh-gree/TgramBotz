@@ -631,7 +631,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def on_shell(update: Update, context: ContextTypes.DEFAULT_TYPE, cmd: str) -> None:
-    from tgrambotz.bot.shell import INLINE_MAX, get_session
+    from tgrambotz.bot.shell import INLINE_MAX, get_e2b_session, get_local_session
     from tgrambotz.bot.telegraph import create_output_page
 
     if not cmd:
@@ -639,11 +639,22 @@ async def on_shell(update: Update, context: ContextTypes.DEFAULT_TYPE, cmd: str)
         return
 
     chat_id = update.effective_chat.id
-    session = get_session(chat_id)
+
+    # Route to E2B if there's an active workspace, otherwise run locally
+    async with async_session_factory() as db:
+        state = await db.get(ChatState, chat_id)
+        if state and state.active_session_id:
+            from tgrambotz.db.models import Session as DBSession
+            sess = await db.get(DBSession, state.active_session_id)
+            shell = get_e2b_session(sess.id, sess.e2b_sandbox_id)
+            workspace_label = f"<i>{sess.name}</i> ☁️"
+        else:
+            shell = get_local_session(chat_id)
+            workspace_label = "<i>local</i>"
 
     msg = await update.message.reply_text(
         parse_mode=ParseMode.HTML,
-        text=f"<code>$ {cmd}</code>\n\n<pre>…</pre>",
+        text=f"<code>$ {cmd}</code>  {workspace_label}\n\n<pre>…</pre>",
     )
 
     last_edit = 0.0
@@ -659,17 +670,15 @@ async def on_shell(update: Update, context: ContextTypes.DEFAULT_TYPE, cmd: str)
         tail = vis[-15:] if len(vis) > 15 else vis
         prefix = f"… {len(vis) - len(tail)} lines\n" if len(vis) > len(tail) else ""
         body = prefix + "\n".join(tail) if tail else "…"
-        return f"<code>$ {cmd}</code>\n\n<pre>{body}</pre>"
+        return f"<code>$ {cmd}</code>  {workspace_label}\n\n<pre>{body}</pre>"
 
-    async for all_lines, done in session.run(cmd):
-        # Extract exit code from sentinel lines
+    async for all_lines, done in shell.run(cmd):
         for l in all_lines:
             if l.startswith("\x00exit:"):
                 try:
                     exit_code = int(l[6:])
                 except ValueError:
                     pass
-
         if not done:
             now = time.monotonic()
             if now - last_edit >= 1.0:
@@ -679,29 +688,25 @@ async def on_shell(update: Update, context: ContextTypes.DEFAULT_TYPE, cmd: str)
                 except Exception:
                     pass
 
-    # ── Final render ────────────────────────────────────────────────────
     elapsed = time.monotonic() - start
     vis = visible_lines(all_lines)
     status = "✅" if (exit_code == 0 or exit_code is None) else "❌"
     meta = f"{status}  exit {exit_code if exit_code is not None else '?'}  ·  {len(vis)} lines  ·  {elapsed:.1f}s"
 
     if len(vis) <= INLINE_MAX:
-        # Short output — show inline
         body = "\n".join(vis) if vis else "(no output)"
         await msg.edit_text(
             parse_mode=ParseMode.HTML,
-            text=f"<code>$ {cmd}</code>\n\n<pre>{body}</pre>\n\n{meta}",
+            text=f"<code>$ {cmd}</code>  {workspace_label}\n\n<pre>{body}</pre>\n\n{meta}",
         )
     else:
-        # Long output — Telegraph page + summary card
-        tail = vis[-10:]
-        tail_text = "\n".join(tail)
+        tail_text = "\n".join(vis[-10:])
         try:
             url = await create_output_page(cmd, "\n".join(vis), exit_code, elapsed)
             await msg.edit_text(
                 parse_mode=ParseMode.HTML,
                 text=(
-                    f"<code>$ {cmd}</code>\n\n"
+                    f"<code>$ {cmd}</code>  {workspace_label}\n\n"
                     f"<pre>{tail_text}</pre>\n\n"
                     f"{meta}"
                 ),
@@ -714,7 +719,7 @@ async def on_shell(update: Update, context: ContextTypes.DEFAULT_TYPE, cmd: str)
             logging.getLogger(__name__).exception("Telegraph failed for shell output: %s", e)
             await msg.edit_text(
                 parse_mode=ParseMode.HTML,
-                text=f"<code>$ {cmd}</code>\n\n<pre>{tail_text}</pre>\n\n{meta}\n<i>⚠️ Full output unavailable</i>",
+                text=f"<code>$ {cmd}</code>  {workspace_label}\n\n<pre>{tail_text}</pre>\n\n{meta}\n<i>⚠️ Full output unavailable</i>",
             )
 
 
