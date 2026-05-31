@@ -130,11 +130,20 @@ class LocalOpenCodeAgent:
             listener = asyncio.create_task(_listen())
             await asyncio.sleep(0.3)
 
+            # Parse "openrouter/model/name" → providerID + modelID
+            model_str = settings.openrouter_model
+            parts = model_str.split("/", 1)
+            provider_id = parts[0]
+            model_id = parts[1] if len(parts) > 1 else model_str
+
             async with httpx.AsyncClient() as client:
                 await client.post(
                     f"{_BASE}/session/{self._session_id}/prompt_async",
                     params={"directory": _DIR},
-                    json={"parts": [{"type": "text", "text": message}]},
+                    json={
+                        "parts": [{"type": "text", "text": message}],
+                        "model": {"providerID": provider_id, "modelID": model_id},
+                    },
                 )
 
             try:
