@@ -7,6 +7,12 @@ set dotenv-load := false
 default:
     @just --list
 
+# ── Bootstrap ─────────────────────────────────────────────────────────────────
+
+# Install system dependencies (Doppler CLI)
+init:
+    curl -Ls --tlsv1.2 --proto "=https" https://cli.doppler.com/install.sh | sudo sh
+
 # ── Dependencies ──────────────────────────────────────────────────────────────
 
 # Install / sync Python dependencies
