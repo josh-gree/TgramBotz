@@ -71,8 +71,7 @@ def _diff_to_nodes(filename: str, additions: int, deletions: int, diff_text: str
     return nodes
 
 
-_CHUNK = 2000       # chars per pre block
-_MAX_CONTENT = 50_000  # Telegraph's effective content limit
+_MAX_CHARS = 50_000
 
 
 async def create_output_page(
@@ -90,25 +89,23 @@ async def create_output_page(
     line_count = output.count("\n") + 1
     status = "✅ 0" if exit_code == 0 else f"❌ {exit_code}"
 
-    truncated = False
-    if len(output) > _MAX_CONTENT:
-        output = output[:_MAX_CONTENT]
-        truncated = True
+    truncated = len(output) > _MAX_CHARS
+    if truncated:
+        # Truncate cleanly at a line boundary
+        output = output[:_MAX_CHARS].rsplit("\n", 1)[0]
 
     nodes: list = [
         _node("h3", f"$ {cmd}"),
         _node("p", f"exit {status}  ·  {line_count} lines  ·  {elapsed:.1f}s"),
         _node("hr"),
+        _node("pre", output),
     ]
 
-    for i in range(0, len(output), _CHUNK):
-        nodes.append(_node("pre", output[i:i + _CHUNK]))
-
     if truncated:
-        nodes.append(_node("p", f"⚠️ Output truncated at {_MAX_CONTENT:,} chars"))
+        nodes.append(_node("p", f"⚠️ Output truncated at {_MAX_CHARS:,} chars"))
 
     content_json = json.dumps(nodes)
-    log.info("Telegraph createPage: %d nodes, %d chars of JSON", len(nodes), len(content_json))
+    log.info("Telegraph createPage: %d chars", len(content_json))
 
     async with httpx.AsyncClient() as client:
         r = await client.post(
