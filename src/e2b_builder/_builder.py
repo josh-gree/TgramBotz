@@ -8,8 +8,8 @@ from e2b.api.client.api.templates import delete_templates_template_id
 from e2b.sandbox_async.sandbox_api import get_api_client
 from e2b.connection_config import ConnectionConfig
 
-from e2b_builder.errors import BuildError, ContextNotFoundError, DockerfileNotFoundError
-from e2b_builder.models import BuildResult
+from e2b_builder.errors import BuildError, ContextNotFoundError, DockerfileNotFoundError, RunError
+from e2b_builder.models import BuildResult, RunResult
 
 
 async def build(
@@ -50,6 +50,35 @@ async def build(
         raise BuildError(str(exc)) from exc
 
     return BuildResult(template_id=info.template_id, name=name)
+
+
+async def run(
+    template_id: str,
+    input: str,
+    *,
+    command: str,
+    api_key: str = "",
+    timeout: int = 60,
+) -> RunResult:
+    try:
+        sandbox = await AsyncSandbox.create(template_id, api_key=api_key)
+    except Exception as exc:
+        raise RunError(str(exc)) from exc
+
+    try:
+        await sandbox.files.write("/tmp/_stdin", input.encode())
+        result = await sandbox.commands.run(
+            f"{command} < /tmp/_stdin", timeout=timeout
+        )
+        return RunResult(
+            stdout=result.stdout,
+            stderr=result.stderr,
+            exit_code=result.exit_code,
+        )
+    except Exception as exc:
+        raise RunError(str(exc)) from exc
+    finally:
+        await AsyncSandbox.kill(sandbox.sandbox_id, api_key=api_key)
 
 
 async def delete(template_id: str, *, api_key: str = "") -> bool:

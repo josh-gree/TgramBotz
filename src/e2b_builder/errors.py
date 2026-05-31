@@ -8,3 +8,7 @@ class ContextNotFoundError(FileNotFoundError):
 
 class BuildError(RuntimeError):
     pass
+
+
+class RunError(RuntimeError):
+    pass
