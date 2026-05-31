@@ -24,8 +24,13 @@ async def main() -> None:
         text = update.message.text
         chat_id = update.effective_chat.id
         log.info("chat=%s: %s", chat_id, text[:120])
+
         await context.bot.send_chat_action(chat_id, "typing")
-        reply = await agent.chat(text)
+
+        async def on_tool(msg: str) -> None:
+            await context.bot.send_message(chat_id, msg, parse_mode="Markdown")
+
+        reply = await agent.chat(text, on_tool=on_tool)
         await update.message.reply_text(reply)
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))

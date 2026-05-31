@@ -1,7 +1,8 @@
 import asyncio
+import json
 import logging
-import re
 import shlex
+from typing import Awaitable, Callable
 
 from e2b import AsyncSandbox
 
@@ -9,21 +10,40 @@ from tgrambotz.config import settings
 
 log = logging.getLogger(__name__)
 
-# Pre-built E2B template with opencode-ai already installed
 E2B_TEMPLATE = "owngk1zv1374s7wd8y6f"
 RESPONSE_TIMEOUT = 120
 
-# Strip ANSI escape codes and the opencode UI header line ("› build · model")
-_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[mKGHJA-Za-z]|\x1b\].*?\x07|\x1b[()][AB012]')
+_TOOL_ICONS = {
+    "bash": "🔧",
+    "read": "📖",
+    "write": "✏️",
+    "edit": "✏️",
+    "glob": "🔍",
+    "grep": "🔍",
+    "patch": "✏️",
+}
 
 
-def _clean(text: str) -> str:
-    text = _ANSI_RE.sub("", text)
-    lines = [
-        l for l in text.splitlines()
-        if not l.strip().startswith(">") and l.strip() != ""
-    ]
-    return "\n".join(lines).strip()
+def _format_tool_event(event: dict) -> str | None:
+    part = event.get("part", {})
+    tool = part.get("tool", "")
+    state = part.get("state", {})
+    inp = state.get("input", {})
+    title = state.get("title", "")
+    icon = _TOOL_ICONS.get(tool, "⚙️")
+
+    if tool == "bash":
+        detail = inp.get("command", title)[:120]
+        return f"{icon} `{detail}`"
+    elif tool in ("read", "write", "edit", "patch"):
+        detail = inp.get("filePath", inp.get("path", title))
+        return f"{icon} `{detail}`"
+    elif tool in ("glob", "grep"):
+        detail = inp.get("pattern", inp.get("query", title))
+        return f"{icon} `{detail}`"
+    elif tool:
+        return f"{icon} {tool}: {title or str(inp)[:80]}"
+    return None
 
 
 class OpenCodeAgent:
@@ -38,7 +58,6 @@ class OpenCodeAgent:
             api_key=settings.e2b_api_key,
         )
         log.info("Sandbox ready: %s", self._sandbox.sandbox_id)
-        # Trigger the one-time DB migration now so the first chat isn't slow
         await self._exec("opencode --version 2>&1", timeout=30)
 
     async def _exec(self, cmd: str, timeout: float = RESPONSE_TIMEOUT) -> str:
@@ -53,18 +72,74 @@ class OpenCodeAgent:
         )
         try:
             await asyncio.wait_for(handle.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            log.warning("Command timed out: %s", cmd[:80])
-        except Exception as e:
-            log.warning("Command error: %s", e)
+        except (asyncio.TimeoutError, Exception) as e:
+            log.warning("exec error (%s): %s", cmd[:60], e)
         return "\n".join(lines)
 
-    async def chat(self, message: str) -> str:
+    async def chat(
+        self,
+        message: str,
+        on_tool: Callable[[str], Awaitable[None]] | None = None,
+    ) -> str:
         async with self._lock:
             quoted = shlex.quote(message)
-            cmd = f"opencode run --continue --dangerously-skip-permissions -m {settings.openrouter_model} {quoted} 2>&1"
-            raw = await self._exec(cmd, timeout=RESPONSE_TIMEOUT)
-            return _clean(raw) or "(no response)"
+            cmd = (
+                f"opencode run --continue --dangerously-skip-permissions "
+                f"--format json -m {settings.openrouter_model} {quoted} 2>&1"
+            )
+
+            loop = asyncio.get_running_loop()
+            queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+            def enqueue(line: str) -> None:
+                loop.call_soon_threadsafe(queue.put_nowait, line)
+
+            handle = await self._sandbox.commands.run(
+                cmd,
+                background=True,
+                on_stdout=enqueue,
+                on_stderr=enqueue,
+                timeout=0,
+                envs={"OPENROUTER_API_KEY": settings.openrouter_api_key},
+            )
+
+            async def _wait_done():
+                try:
+                    await asyncio.wait_for(handle.wait(), timeout=RESPONSE_TIMEOUT)
+                except Exception as e:
+                    log.warning("opencode wait error: %s", e)
+                finally:
+                    loop.call_soon_threadsafe(queue.put_nowait, None)
+
+            asyncio.create_task(_wait_done())
+
+            final_text: list[str] = []
+
+            while True:
+                line = await queue.get()
+                if line is None:
+                    break
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                etype = event.get("type")
+
+                if etype == "tool_use" and on_tool:
+                    msg = _format_tool_event(event)
+                    if msg:
+                        try:
+                            await on_tool(msg)
+                        except Exception as e:
+                            log.warning("on_tool error: %s", e)
+
+                elif etype == "text":
+                    text = event.get("part", {}).get("text", "")
+                    if text:
+                        final_text.append(text)
+
+            return "\n".join(final_text).strip() or "(no response)"
 
     async def stop(self) -> None:
         if self._sandbox:
