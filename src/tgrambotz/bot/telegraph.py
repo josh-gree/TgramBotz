@@ -71,6 +71,40 @@ def _diff_to_nodes(filename: str, additions: int, deletions: int, diff_text: str
     return nodes
 
 
+async def create_output_page(
+    cmd: str,
+    output: str,
+    exit_code: int | None,
+    elapsed: float,
+) -> str:
+    """Post full command output to Telegraph and return the URL."""
+    import json
+    token = await _get_token()
+    lines = output.count("\n") + 1
+    status = "✅ 0" if exit_code == 0 else f"❌ {exit_code}"
+
+    nodes = [
+        _node("h3", f"$ {cmd}"),
+        _node("p", f"exit {status}  ·  {lines} lines  ·  {elapsed:.1f}s"),
+        _node("hr"),
+        _node("pre", output),
+    ]
+
+    async with httpx.AsyncClient() as client:
+        r = await client.post(f"{_BASE}/createPage", data={
+            "access_token": token,
+            "title": f"$ {cmd[:60]}",
+            "author_name": "TgramBotz",
+            "content": json.dumps(nodes),
+            "return_content": "false",
+        })
+        r.raise_for_status()
+        result = r.json()
+        if not result.get("ok"):
+            raise RuntimeError(f"Telegraph error: {result}")
+        return result["result"]["url"]
+
+
 async def create_file_page(filename: str, content: str) -> str:
     """Post a file's content to Telegraph and return the public URL."""
     import json

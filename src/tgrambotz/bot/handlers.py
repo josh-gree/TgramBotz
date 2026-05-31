@@ -631,7 +631,8 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def on_shell(update: Update, context: ContextTypes.DEFAULT_TYPE, cmd: str) -> None:
-    from tgrambotz.bot.shell import get_session
+    from tgrambotz.bot.shell import INLINE_MAX, get_session
+    from tgrambotz.bot.telegraph import create_output_page
 
     if not cmd:
         await update.message.reply_text("Usage: <code>$ &lt;command&gt;</code>", parse_mode=ParseMode.HTML)
@@ -640,37 +641,80 @@ async def on_shell(update: Update, context: ContextTypes.DEFAULT_TYPE, cmd: str)
     chat_id = update.effective_chat.id
     session = get_session(chat_id)
 
-    # Send initial message then stream output into it
     msg = await update.message.reply_text(
         parse_mode=ParseMode.HTML,
-        text=f"<code>$ {cmd}</code>\n<pre>…</pre>",
+        text=f"<code>$ {cmd}</code>\n\n<pre>…</pre>",
     )
 
-    lines: list[str] = []
     last_edit = 0.0
+    all_lines: list[str] = []
+    exit_code: int | None = None
+    start = time.monotonic()
 
-    async def render() -> str:
-        body = "\n".join(lines) if lines else "…"
-        # Telegram message limit is 4096 chars — keep last portion if needed
-        if len(body) > 3800:
-            body = "…\n" + body[-3700:]
-        return f"<code>$ {cmd}</code>\n<pre>{body}</pre>"
+    def visible_lines(lines: list[str]) -> list[str]:
+        return [l for l in lines if not l.startswith("\x00")]
 
-    async for line in session.run(cmd):
-        lines.append(line)
-        now = time.monotonic()
-        if now - last_edit >= 1.0:
-            try:
-                await msg.edit_text(parse_mode=ParseMode.HTML, text=await render())
-                last_edit = now
-            except Exception:
-                pass
+    def live_text(lines: list[str]) -> str:
+        vis = visible_lines(lines)
+        tail = vis[-15:] if len(vis) > 15 else vis
+        prefix = f"… {len(vis) - len(tail)} lines\n" if len(vis) > len(tail) else ""
+        body = prefix + "\n".join(tail) if tail else "…"
+        return f"<code>$ {cmd}</code>\n\n<pre>{body}</pre>"
 
-    # Final edit with complete output
-    try:
-        await msg.edit_text(parse_mode=ParseMode.HTML, text=await render())
-    except Exception:
-        pass
+    async for all_lines, done in session.run(cmd):
+        # Extract exit code from sentinel lines
+        for l in all_lines:
+            if l.startswith("\x00exit:"):
+                try:
+                    exit_code = int(l[6:])
+                except ValueError:
+                    pass
+
+        if not done:
+            now = time.monotonic()
+            if now - last_edit >= 1.0:
+                try:
+                    await msg.edit_text(parse_mode=ParseMode.HTML, text=live_text(all_lines))
+                    last_edit = now
+                except Exception:
+                    pass
+
+    # ── Final render ────────────────────────────────────────────────────
+    elapsed = time.monotonic() - start
+    vis = visible_lines(all_lines)
+    status = "✅" if (exit_code == 0 or exit_code is None) else "❌"
+    meta = f"{status}  exit {exit_code if exit_code is not None else '?'}  ·  {len(vis)} lines  ·  {elapsed:.1f}s"
+
+    if len(vis) <= INLINE_MAX:
+        # Short output — show inline
+        body = "\n".join(vis) if vis else "(no output)"
+        await msg.edit_text(
+            parse_mode=ParseMode.HTML,
+            text=f"<code>$ {cmd}</code>\n\n<pre>{body}</pre>\n\n{meta}",
+        )
+    else:
+        # Long output — Telegraph page + summary card
+        tail = vis[-10:]
+        tail_text = "\n".join(tail)
+        try:
+            url = await create_output_page(cmd, "\n".join(vis), exit_code, elapsed)
+            await msg.edit_text(
+                parse_mode=ParseMode.HTML,
+                text=(
+                    f"<code>$ {cmd}</code>\n\n"
+                    f"<pre>{tail_text}</pre>\n\n"
+                    f"{meta}"
+                ),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("👁 View Full Output", url=url),
+                ]]),
+            )
+        except Exception:
+            # Telegraph failed — fall back to truncated inline
+            await msg.edit_text(
+                parse_mode=ParseMode.HTML,
+                text=f"<code>$ {cmd}</code>\n\n<pre>{tail_text}</pre>\n\n{meta}",
+            )
 
 
 SAMPLE_DIFF = """\
