@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import time
 
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters
@@ -8,10 +9,12 @@ from telegram.ext import Application, MessageHandler, filters
 from tgrambotz.config import settings
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s — %(message)s",
 )
 log = logging.getLogger(__name__)
+
+_EDIT_INTERVAL = 0.5  # seconds between Telegram edits
 
 
 async def main() -> None:
@@ -27,19 +30,74 @@ async def main() -> None:
     app = Application.builder().token(settings.telegram_token).build()
 
     async def on_message(update: Update, context) -> None:
-        text = update.message.text
+        msg_text = update.message.text
         chat_id = update.effective_chat.id
-        log.info("chat=%s: %s", chat_id, text[:120])
+        log.info("chat=%s: %s", chat_id, msg_text[:120])
 
         await context.bot.send_chat_action(chat_id, "typing")
 
-        async def on_tool(msg: str) -> None:
-            await context.bot.send_message(chat_id, msg, parse_mode="Markdown")
+        # Streaming state for reasoning and response
+        reasoning_msg_id = None
+        reasoning_buf: list[str] = []
+        reasoning_last_edit = 0.0
 
-        async def on_text(text: str) -> None:
-            await update.message.reply_text(text)
+        response_msg_id = None
+        response_buf: list[str] = []
+        response_last_edit = 0.0
 
-        await agent.chat(text, on_tool=on_tool, on_text=on_text)
+        async def on_reasoning_delta(delta: str) -> None:
+            nonlocal reasoning_msg_id, reasoning_last_edit
+            reasoning_buf.append(delta)
+            full = "".join(reasoning_buf)
+            now = time.monotonic()
+            if reasoning_msg_id is None:
+                sent = await context.bot.send_message(chat_id, f"💭 {full}")
+                reasoning_msg_id = sent.message_id
+                reasoning_last_edit = now
+            elif now - reasoning_last_edit >= _EDIT_INTERVAL:
+                try:
+                    await context.bot.edit_message_text(f"💭 {full}", chat_id, reasoning_msg_id)
+                    reasoning_last_edit = now
+                except Exception:
+                    pass
+
+        async def on_text_delta(delta: str) -> None:
+            nonlocal response_msg_id, response_last_edit
+            response_buf.append(delta)
+            full = "".join(response_buf)
+            now = time.monotonic()
+            if response_msg_id is None:
+                sent = await update.message.reply_text(full)
+                response_msg_id = sent.message_id
+                response_last_edit = now
+            elif now - response_last_edit >= _EDIT_INTERVAL:
+                try:
+                    await context.bot.edit_message_text(full, chat_id, response_msg_id)
+                    response_last_edit = now
+                except Exception:
+                    pass
+
+        await agent.chat(
+            msg_text,
+            on_reasoning_delta=on_reasoning_delta,
+            on_text_delta=on_text_delta,
+        )
+
+        # Final edits to ensure complete content is shown
+        if reasoning_msg_id and reasoning_buf:
+            try:
+                await context.bot.edit_message_text(
+                    f"💭 {''.join(reasoning_buf)}", chat_id, reasoning_msg_id
+                )
+            except Exception:
+                pass
+        if response_msg_id and response_buf:
+            try:
+                await context.bot.edit_message_text(
+                    "".join(response_buf), chat_id, response_msg_id
+                )
+            except Exception:
+                pass
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
 

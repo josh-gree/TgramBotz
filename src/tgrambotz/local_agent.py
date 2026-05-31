@@ -61,13 +61,16 @@ class LocalOpenCodeAgent:
 
         log.info("opencode server ready, session=%s", self._session_id)
 
-    async def chat(self, message: str, on_tool=None, on_text=None) -> None:
+    async def chat(
+        self,
+        message: str,
+        on_reasoning_delta=None,
+        on_text_delta=None,
+        on_tool=None,
+    ) -> None:
         async with self._lock:
             done = asyncio.Event()
-            reasoning_events: list[str] = []
-            text_events: list[str] = []
-            # map partID → "reasoning" | "text"
-            part_types: dict[str, str] = {}
+            part_types: dict[str, str] = {}  # partID → "reasoning" | "text"
 
             async def _listen() -> None:
                 async with httpx.AsyncClient(timeout=httpx.Timeout(300)) as client:
@@ -86,12 +89,10 @@ class LocalOpenCodeAgent:
                                 continue
 
                             etype = evt.get("type", "")
-                            log.debug("SSE event: %s", json.dumps(evt)[:500])
+                            props = evt.get("properties", {})
 
                             if etype in ("server.heartbeat", "server.connected"):
                                 continue
-
-                            props = evt.get("properties", {})
 
                             if etype == "session.status":
                                 if props.get("status", {}).get("type") == "busy":
@@ -103,16 +104,23 @@ class LocalOpenCodeAgent:
                                 pid = part.get("id", "")
                                 if ptype in ("reasoning", "text") and pid:
                                     part_types[pid] = ptype
-                                    bucket = reasoning_events if ptype == "reasoning" else text_events
-                                    bucket.append(json.dumps(evt))
 
                             elif etype == "message.part.delta" and saw_busy:
                                 pid = props.get("partID", "")
                                 ptype = part_types.get(pid, "")
-                                if ptype == "reasoning":
-                                    reasoning_events.append(json.dumps(evt))
-                                elif ptype == "text":
-                                    text_events.append(json.dumps(evt))
+                                delta = props.get("delta", "")
+                                if not delta:
+                                    continue
+                                if ptype == "reasoning" and on_reasoning_delta:
+                                    try:
+                                        await on_reasoning_delta(delta)
+                                    except Exception as e:
+                                        log.warning("on_reasoning_delta error: %s", e)
+                                elif ptype == "text" and on_text_delta:
+                                    try:
+                                        await on_text_delta(delta)
+                                    except Exception as e:
+                                        log.warning("on_text_delta error: %s", e)
 
                             elif etype == "session.idle" and saw_busy:
                                 done.set()
@@ -127,7 +135,7 @@ class LocalOpenCodeAgent:
             model_id = parts[1] if len(parts) > 1 else model_str
 
             async with httpx.AsyncClient() as client:
-                r = await client.post(
+                await client.post(
                     f"{_BASE}/session/{self._session_id}/prompt_async",
                     params={"directory": _DIR},
                     json={
@@ -135,7 +143,6 @@ class LocalOpenCodeAgent:
                         "model": {"providerID": provider_id, "modelID": model_id},
                     },
                 )
-                log.debug("prompt_async status=%s body=%s", r.status_code, r.text[:200])
 
             try:
                 await asyncio.wait_for(done.wait(), timeout=120)
@@ -147,25 +154,6 @@ class LocalOpenCodeAgent:
                     await listener
                 except asyncio.CancelledError:
                     pass
-
-            async def _send_bucket(label: str, events: list[str]) -> None:
-                if not events or not on_text:
-                    return
-                chunk: list[str] = []
-                chunk_len = 0
-                for evt_str in events:
-                    line = evt_str + "\n"
-                    if chunk_len + len(line) > 3800:
-                        await on_text(f"*{label}*\n```\n" + "".join(chunk) + "```")
-                        chunk = []
-                        chunk_len = 0
-                    chunk.append(line)
-                    chunk_len += len(line)
-                if chunk:
-                    await on_text(f"*{label}*\n```\n" + "".join(chunk) + "```")
-
-            await _send_bucket("reasoning", reasoning_events)
-            await _send_bucket("response", text_events)
 
     async def stop(self) -> None:
         if self._proc:
