@@ -116,6 +116,8 @@ class OpenCodeAgent:
 
             asyncio.create_task(_wait_done())
 
+            turns = 0
+
             while True:
                 line = await queue.get()
                 if line is None:
@@ -126,6 +128,16 @@ class OpenCodeAgent:
                     continue
 
                 etype = event.get("type")
+
+                if etype == "step_finish":
+                    turns += 1
+                    if turns >= settings.max_turns:
+                        log.warning("max_turns=%d reached, killing opencode", settings.max_turns)
+                        try:
+                            await handle.kill()
+                        except Exception:
+                            pass
+                        break
 
                 if etype == "tool_use" and on_tool:
                     msg = _format_tool_event(event)

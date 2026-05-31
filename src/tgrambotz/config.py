@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     e2b_api_key: str
     openrouter_api_key: str = ""
     openrouter_model: str = "openrouter/deepseek/deepseek-v4-flash"
+    max_turns: int = 20
 
 
 settings = Settings()
