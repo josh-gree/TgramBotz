@@ -2,26 +2,103 @@
 
 ## Start of every session — do this first
 
+### Step 1 — Make `just` available
+
+`just` is pre-installed at `~/.cargo/bin/just` but is not on PATH by default:
+
 ```bash
-just init       # installs Doppler CLI (required for all secret-bearing commands)
-just install    # uv sync — install/update Python deps
+export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
-Then check the active sandbox is still running:
+Add this to your shell rc if needed, or use `~/.cargo/bin/just` everywhere below.
+
+### Step 2 — Install Doppler CLI
 
 ```bash
-cat .sandbox-id                   # confirm sandbox ID is present
+just init       # downloads and installs the Doppler CLI via curl
+```
+
+### Step 3 — Configure Doppler project scope
+
+`just init` installs the CLI but does not point it at a project. Without this step, all `doppler run --` commands fail with "You must specify a project":
+
+```bash
+doppler setup --project claude-mobilr --config dev --no-interactive
+```
+
+Verify it worked:
+
+```bash
+doppler whoami          # should show your workspace
+doppler secrets --only-names   # should list TELEGRAM_TOKEN etc.
+```
+
+### Step 4 — Install Python deps
+
+```bash
+just install    # runs: uv sync
+```
+
+### Step 5 — Check sandbox status
+
+```bash
+cat .sandbox-id                   # must exist — see below if missing
 just bot-status                   # should say "running" or "paused"
-just bot-resume                   # if paused
-just bot-logs                     # confirm bot is polling Telegram
 ```
 
-If `.sandbox-id` is missing (new session, file not committed), recreate it:
+**If `.sandbox-id` is missing** (gitignored; not committed):
 
 ```bash
-echo "inv8w825em5hs1ej2nu9k" > .sandbox-id
+echo "inxeeydhxa10wh83vppbg" > .sandbox-id
 just bot-status
 ```
+
+**If `bot-status` returns 404 / "unreachable"** — the sandbox is gone and must be recreated:
+
+```bash
+rm .sandbox-id
+just bot-start    # creates a new sandbox, uploads source, starts bot (~60s)
+```
+
+`just bot-start` saves the new sandbox ID to `.sandbox-id` automatically. Update the ID in this file's "Active sandbox" section and commit.
+
+**If `bot-status` says "paused":**
+
+```bash
+just bot-resume
+```
+
+### Step 6 — Confirm the bot is polling Telegram
+
+`just bot-logs` may appear empty due to an E2B filesystem read-caching quirk (the bot writes correctly; the SDK file-read API sometimes returns stale data). Use a shell cat instead:
+
+```bash
+doppler run -- uv run python -c "
+import asyncio, ssl, pathlib
+ssl._create_default_https_context = ssl._create_unverified_context
+from e2b import AsyncSandbox
+from tgrambotz.config import settings
+
+async def check():
+    sid = pathlib.Path('.sandbox-id').read_text().strip()
+    sb = await AsyncSandbox.connect(sid, api_key=settings.e2b_api_key)
+    r = await sb.commands.run('tail -20 /home/user/bot.log', timeout=10)
+    print(r.stdout or '(empty)')
+    r2 = await sb.commands.run('ps aux | grep -E \"tgrambotz|opencode\" | grep -v grep', timeout=5)
+    print(r2.stdout)
+asyncio.run(check())
+"
+```
+
+A healthy bot shows log lines like:
+```
+INFO tgrambotz.local_agent — opencode server ready, session=ses_...
+INFO telegram.ext.Application — Application started
+INFO __main__ — Bot running — press Ctrl+C to stop
+INFO httpx — HTTP Request: POST https://api.telegram.org/.../getUpdates "HTTP/1.1 200 OK"
+```
+
+And two processes: `python3 -u -m tgrambotz` and `opencode serve --port 7701`.
 
 ---
 
@@ -36,7 +113,7 @@ A Telegram bot that gives users access to an AI coding agent. The user sends a m
 ```
 User (Telegram) → Telegram servers
                        ↓ long-polling
-              E2B Sandbox (inv8w825em5hs1ej2nu9k)
+              E2B Sandbox (inxeeydhxa10wh83vppbg)
               ┌────────────────────────────────────────┐
               │  python3 -u -m tgrambotz               │
               │  (SANDBOX_MODE=1)                      │
@@ -169,6 +246,8 @@ asyncio.run(upload_and_restart())
 The sandbox was created with `lifecycle={"on_timeout": "pause", "auto_resume": True}` — it auto-pauses on idle rather than terminating. `just bot-stop` permanently kills it; avoid unless starting fresh.
 
 **Known E2B bug (#884):** Filesystem writes may not persist after the 2nd+ pause/resume cycle. The bot process (in memory) survives fine; only new file writes are affected.
+
+**Known E2B log-read caching quirk:** `sb.files.read('/home/user/bot.log')` and even `sb.commands.run('cat /home/user/bot.log')` can return stale (empty) content for a minute or more after the bot starts writing. The bot IS writing correctly (confirmed via `readlink /proc/<pid>/fd/1`). Work around this by triggering a shell-side write first (`echo "" >> /home/user/bot.log`) or just wait and retry with `tail -20`.
 
 ---
 
