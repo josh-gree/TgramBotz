@@ -17,6 +17,10 @@ log = logging.getLogger(__name__)
 _EDIT_INTERVAL = 0.5  # seconds between Telegram edits
 
 
+def _esc(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 async def main() -> None:
     if os.environ.get("SANDBOX_MODE"):
         from tgrambotz.local_agent import LocalOpenCodeAgent
@@ -48,15 +52,15 @@ async def main() -> None:
         async def on_reasoning_delta(delta: str) -> None:
             nonlocal reasoning_msg_id, reasoning_last_edit
             reasoning_buf.append(delta)
-            full = "".join(reasoning_buf)
+            html = f"<blockquote>💭 {_esc(''.join(reasoning_buf))}</blockquote>"
             now = time.monotonic()
             if reasoning_msg_id is None:
-                sent = await context.bot.send_message(chat_id, f"💭 {full}")
+                sent = await context.bot.send_message(chat_id, html, parse_mode="HTML")
                 reasoning_msg_id = sent.message_id
                 reasoning_last_edit = now
             elif now - reasoning_last_edit >= _EDIT_INTERVAL:
                 try:
-                    await context.bot.edit_message_text(f"💭 {full}", chat_id, reasoning_msg_id)
+                    await context.bot.edit_message_text(html, chat_id, reasoning_msg_id, parse_mode="HTML")
                     reasoning_last_edit = now
                 except Exception:
                     pass
@@ -86,9 +90,8 @@ async def main() -> None:
         # Final edits to ensure complete content is shown
         if reasoning_msg_id and reasoning_buf:
             try:
-                await context.bot.edit_message_text(
-                    f"💭 {''.join(reasoning_buf)}", chat_id, reasoning_msg_id
-                )
+                html = f"<blockquote>💭 {_esc(''.join(reasoning_buf))}</blockquote>"
+                await context.bot.edit_message_text(html, chat_id, reasoning_msg_id, parse_mode="HTML")
             except Exception:
                 pass
         if response_msg_id and response_buf:
